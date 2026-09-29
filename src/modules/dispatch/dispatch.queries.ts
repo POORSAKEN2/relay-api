@@ -1,0 +1,223 @@
+import { and, asc, desc, eq, isNull, notInArray, type SQL, sql } from 'drizzle-orm'
+import { alias, type PgColumn } from 'drizzle-orm/pg-core'
+import { type Db, db, type Tx } from '../../db/client.ts'
+import {
+  arrivalWindows,
+  customers,
+  jobNotes,
+  jobs,
+  properties,
+  services,
+  tenants,
+  users,
+} from '../../db/schema.ts'
+import { INACTIVE_STATUSES } from '../booking/booking.queries.ts'
+
+// Tenant-scoped: every query takes tenantId first. Local times are the contractor's wall
+// clock, worked out in Postgres from tenants.timezone.
+
+const technicians = alias(users, 'technicians')
+const authors = alias(users, 'authors')
+
+function local(column: PgColumn, format: string): SQL<string> {
+  return sql<string>`to_char(${column} at time zone ${tenants.timezone}, ${format})`
+}
+
+// The arrival window a job sits in: same weekday and same local start time. A job whose
+// window was changed or removed since booking matches none.
+const matchingWindow = and(
+  eq(arrivalWindows.tenantId, jobs.tenantId),
+  sql`${arrivalWindows.weekday} = extract(dow from ${jobs.windowStartsAt} at time zone ${tenants.timezone})`,
+  sql`${arrivalWindows.startsAt} = (${jobs.windowStartsAt} at time zone ${tenants.timezone})::time`,
+)
+
+export async function findTimezone(tenantId: string) {
+  const [tenant] = await db
+    .select({ timezone: tenants.timezone })
+    .from(tenants)
+    .where(eq(tenants.id, tenantId))
+  return tenant.timezone
+}
+
+export function listWindowsOn(tenantId: string, weekday: number) {
+  return db
+    .select({
+      id: arrivalWindows.id,
+      startsAt: arrivalWindows.startsAt,
+      endsAt: arrivalWindows.endsAt,
+      jobCap: arrivalWindows.jobCap,
+    })
+    .from(arrivalWindows)
+    .where(and(eq(arrivalWindows.tenantId, tenantId), eq(arrivalWindows.weekday, weekday)))
+    .orderBy(asc(arrivalWindows.startsAt))
+}
+
+export function listActiveTechnicians(tenantId: string) {
+  return db
+    .select({ id: users.id, name: users.name })
+    .from(users)
+    .where(
+      and(eq(users.tenantId, tenantId), eq(users.role, 'technician'), isNull(users.disabledAt)),
+    )
+    .orderBy(asc(users.name))
+}
+
+export async function findActiveTechnician(tenantId: string, userId: string, tx: Db = db) {
+  const [technician] = await tx
+    .select({ id: users.id })
+    .from(users)
+    .where(
+      and(
+        eq(users.tenantId, tenantId),
+        eq(users.id, userId),
+        eq(users.role, 'technician'),
+        isNull(users.disabledAt),
+      ),
+    )
+  return technician
+}
+
+// Jobs holding a place on local day `date`, PRIORITY first.
+export function listJobsOn(tenantId: string, date: string) {
+  return db
+    .select({
+      id: jobs.id,
+      status: jobs.status,
+      priority: jobs.priority,
+      source: jobs.source,
+      technicianId: jobs.technicianId,
+      windowId: arrivalWindows.id,
+      localStart: local(jobs.windowStartsAt, 'HH24:MI:SS'),
+      localEnd: local(jobs.windowEndsAt, 'HH24:MI:SS'),
+      customerName: customers.name,
+      city: properties.city,
+      serviceName: services.name,
+      problem: jobs.problem,
+    })
+    .from(jobs)
+    .innerJoin(tenants, eq(tenants.id, jobs.tenantId))
+    .innerJoin(customers, eq(customers.id, jobs.customerId))
+    .innerJoin(properties, eq(properties.id, jobs.propertyId))
+    .innerJoin(services, eq(services.id, jobs.serviceId))
+    .leftJoin(arrivalWindows, matchingWindow)
+    .where(
+      and(
+        eq(jobs.tenantId, tenantId),
+        notInArray(jobs.status, [...INACTIVE_STATUSES]),
+        sql`${jobs.windowStartsAt} >= ${date}::date::timestamp at time zone ${tenants.timezone}`,
+        sql`${jobs.windowStartsAt} < (${date}::date + 1)::timestamp at time zone ${tenants.timezone}`,
+      ),
+    )
+    .orderBy(desc(jobs.priority), asc(jobs.windowStartsAt), asc(jobs.createdAt))
+}
+
+export async function findJobDetail(tenantId: string, jobId: string) {
+  const [job] = await db
+    .select({
+      id: jobs.id,
+      status: jobs.status,
+      priority: jobs.priority,
+      source: jobs.source,
+      problem: jobs.problem,
+      systemType: jobs.systemType,
+      vulnerableOccupant: jobs.vulnerableOccupant,
+      date: local(jobs.windowStartsAt, 'YYYY-MM-DD'),
+      localStart: local(jobs.windowStartsAt, 'HH24:MI:SS'),
+      localEnd: local(jobs.windowEndsAt, 'HH24:MI:SS'),
+      windowId: arrivalWindows.id,
+      technicianId: technicians.id,
+      technicianName: technicians.name,
+      service: { id: services.id, name: services.name },
+      customer: {
+        id: customers.id,
+        name: customers.name,
+        phone: customers.phone,
+        email: customers.email,
+      },
+      property: {
+        street: properties.street,
+        unit: properties.unit,
+        city: properties.city,
+        state: properties.state,
+        zip: properties.zip,
+        equipmentBrand: properties.equipmentBrand,
+        equipmentYear: properties.equipmentYear,
+        notes: properties.notes,
+      },
+      bookedAt: jobs.bookedAt,
+      completedAt: jobs.completedAt,
+      createdAt: jobs.createdAt,
+    })
+    .from(jobs)
+    .innerJoin(tenants, eq(tenants.id, jobs.tenantId))
+    .innerJoin(customers, eq(customers.id, jobs.customerId))
+    .innerJoin(properties, eq(properties.id, jobs.propertyId))
+    .innerJoin(services, eq(services.id, jobs.serviceId))
+    .leftJoin(technicians, eq(technicians.id, jobs.technicianId))
+    .leftJoin(arrivalWindows, matchingWindow)
+    .where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, jobId)))
+  return job
+}
+
+export function listNotes(tenantId: string, jobId: string) {
+  return db
+    .select({
+      id: jobNotes.id,
+      body: jobNotes.body,
+      authorName: authors.name,
+      createdAt: jobNotes.createdAt,
+    })
+    .from(jobNotes)
+    .leftJoin(authors, eq(authors.id, jobNotes.authorId))
+    .where(and(eq(jobNotes.tenantId, tenantId), eq(jobNotes.jobId, jobId)))
+    .orderBy(asc(jobNotes.createdAt))
+}
+
+// Locks the job until the transaction ends, so two people can't change it at once.
+export async function lockJob(tenantId: string, jobId: string, tx: Tx) {
+  const [job] = await tx
+    .select({
+      id: jobs.id,
+      status: jobs.status,
+      technicianId: jobs.technicianId,
+      date: local(jobs.windowStartsAt, 'YYYY-MM-DD'),
+      windowId: arrivalWindows.id,
+    })
+    .from(jobs)
+    .innerJoin(tenants, eq(tenants.id, jobs.tenantId))
+    .leftJoin(arrivalWindows, matchingWindow)
+    .where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, jobId)))
+    .for('update', { of: jobs })
+  return job
+}
+
+export async function jobExists(tenantId: string, jobId: string) {
+  const [job] = await db
+    .select({ id: jobs.id })
+    .from(jobs)
+    .where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, jobId)))
+  return Boolean(job)
+}
+
+export async function updateJob(
+  tenantId: string,
+  jobId: string,
+  values: Partial<Omit<typeof jobs.$inferInsert, 'id' | 'tenantId'>>,
+  tx: Db = db,
+) {
+  await tx
+    .update(jobs)
+    .set(values)
+    .where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, jobId)))
+}
+
+export async function insertNote(
+  tenantId: string,
+  values: { jobId: string; authorId: string; body: string },
+) {
+  const [note] = await db
+    .insert(jobNotes)
+    .values({ ...values, tenantId })
+    .returning({ id: jobNotes.id, body: jobNotes.body, createdAt: jobNotes.createdAt })
+  return note
+}
