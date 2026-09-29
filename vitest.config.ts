@@ -1,0 +1,22 @@
+import { defineConfig } from 'vitest/config'
+
+// Tests run against their own database (TEST_DATABASE_URL), never the development one.
+try {
+  process.loadEnvFile('.env')
+} catch {
+  // No .env file: TEST_DATABASE_URL has to come from the shell.
+}
+
+export default defineConfig({
+  test: {
+    env: {
+      NODE_ENV: 'test',
+      APP_DOMAIN: 'localhost',
+      DATABASE_URL: process.env.TEST_DATABASE_URL ?? '',
+      LOG_LEVEL: 'silent',
+      SENTRY_DSN: '',
+    },
+    globalSetup: './test/global-setup.ts',
+    fileParallelism: false, // test files share one database
+  },
+})
