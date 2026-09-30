@@ -1,0 +1,372 @@
+import { randomBytes } from 'node:crypto'
+import { env } from '../../config/env.ts'
+import { type Db, db, type Tx } from '../../db/client.ts'
+import type { DraftAnswers, Tenant } from '../../db/schema.ts'
+import { HttpError } from '../../lib/http-error.ts'
+import { formatDay, formatWindow } from '../../lib/labels.ts'
+import { emitToTenant } from '../../realtime/index.ts'
+import * as audit from '../audit/audit.queries.ts'
+import * as booking from '../booking/booking.queries.ts'
+import { reserveWindow } from '../booking/booking.service.ts'
+import * as customers from '../customers/customers.queries.ts'
+import { sendText } from '../messaging/sms.ts'
+import { zipIsServed } from '../settings/settings.queries.ts'
+import * as queries from './online-booking.queries.ts'
+import type {
+  BookingInput,
+  CallbackInput,
+  DraftInput,
+  WaitlistInput,
+} from './online-booking.schemas.ts'
+
+// The homeowner's side of booking (flow A). Nobody is signed in: the contractor comes from
+// the web address. Steps 1 to 6 end with a booked visit; the homeowner pays at the visit.
+// From step 3 on, the answers are kept in a draft, so an unfinished booking can be resumed.
+
+const DAYS_AHEAD = 14
+
+// Recovery text: sent once a draft has been quiet this long, and never for one begun longer
+// ago than the cutoff. Still to decide: whether contractors set these themselves.
+const RECOVERY_WAIT_MINUTES = 60
+const RECOVERY_CUTOFF_HOURS = 24
+
+// Shown next to the consent checkboxes and stored with the consent as proof. The booking
+// page gets them from getOptions, so both sides always use the same words.
+// Still to decide: the final wording, after a US telecom lawyer reviews it.
+export const CONSENT_WORDING =
+  'I agree to get texts and calls about my visit, like confirmations and reminders. Reply STOP to opt out.'
+export const WAITLIST_CONSENT_WORDING = 'Text me when a time opens up. Reply STOP to opt out.'
+
+const SERVICE_GONE = 'That service isn’t offered anymore. Pick another one.'
+const DRAFT_GONE = 'That saved booking isn’t available anymore. Start a new one.'
+
+// Step 1: what the contractor offers and charges.
+export async function getOptions(tenant: Tenant) {
+  return {
+    services: await queries.listServices(tenant.id),
+    priorityFeeCents: tenant.priorityFeeCents,
+    consentWording: CONSENT_WORDING,
+    waitlistConsentWording: WAITLIST_CONSENT_WORDING,
+  }
+}
+
+// Step 2: is this ZIP code in the contractor's service area?
+export async function checkZip(tenantId: string, zip: string) {
+  return { zip, served: await zipIsServed(tenantId, zip) }
+}
+
+// Step 5: open arrival windows for the next two weeks, grouped by day.
+export async function listOpenWindows(tenantId: string) {
+  const rows = await queries.listOpenWindows(tenantId, DAYS_AHEAD)
+  const days: { date: string; label: string; windows: { id: string; label: string }[] }[] = []
+  for (const row of rows) {
+    // Rows come sorted by day, so a new date always starts a new group.
+    if (days.at(-1)?.date !== row.date) {
+      days.push({ date: row.date, label: formatDay(row.date), windows: [] })
+    }
+    days.at(-1)!.windows.push({ id: row.id, label: formatWindow(row.startsAt, row.endsAt) })
+  }
+  return { days }
+}
+
+// Step 2 exit: someone outside the service area asks the office to call them.
+export async function requestCallback(tenantId: string, input: CallbackInput) {
+  await queries.insertCallback(tenantId, {
+    name: input.name,
+    phone: input.phone,
+    zip: input.zip,
+    message:
+      input.message || `Asked for a callback. ZIP code ${input.zip} is outside the service area.`,
+    source: 'web',
+  })
+}
+
+// Step 3: saves who started a booking, so it isn't lost if they stop. Coming back to the step
+// with the same draft updates it; no token, or one we don't know, starts a new draft.
+export async function saveDraftContact(tenant: Tenant, input: DraftInput, ip: string | null) {
+  await checkZipServed(tenant.id, input.zip)
+  const contact = {
+    name: input.name,
+    phone: input.phone,
+    zip: input.zip,
+    smsConsent: input.consent,
+  }
+
+  return db.transaction(async (tx) => {
+    const existing = input.token
+      ? await queries.findOpenDraft(tenant.id, input.token, tx)
+      : undefined
+    const token = existing?.token ?? randomBytes(32).toString('hex')
+
+    if (existing) {
+      await queries.updateDraft(tenant.id, existing.id, contact, tx)
+    } else {
+      const draft = await queries.insertDraft(tenant.id, { ...contact, token }, tx)
+      await audit.insertHomeownerAction(
+        tenant.id,
+        {
+          action: 'booking_draft.created',
+          entityType: 'booking_draft',
+          entityId: draft.id,
+          data: { zip: input.zip, consent: input.consent },
+        },
+        tx,
+      )
+    }
+
+    if (input.consent) {
+      await recordConsent(tenant.id, { phone: input.phone, granted: true, ip }, tx)
+    } else if (existing?.smsConsent) {
+      // They had ticked the box and now unticked it: take the consent back for that number.
+      await recordConsent(tenant.id, { phone: existing.phone, granted: false, ip }, tx)
+    }
+    return { token }
+  })
+}
+
+// After each later step: replaces the draft's answers.
+export async function saveDraftAnswers(tenantId: string, token: string, answers: DraftAnswers) {
+  const draft = await queries.findOpenDraft(tenantId, token)
+  if (!draft) throw new HttpError(404, 'not_found', DRAFT_GONE)
+  await queries.updateDraft(tenantId, draft.id, { answers })
+}
+
+// What the wizard needs to pick a draft up again.
+export async function getDraft(tenantId: string, token: string) {
+  const draft = await queries.findOpenDraft(tenantId, token)
+  if (!draft) throw new HttpError(404, 'not_found', DRAFT_GONE)
+  return {
+    name: draft.name,
+    phone: draft.phone,
+    zip: draft.zip,
+    consent: draft.smsConsent,
+    answers: draft.answers,
+  }
+}
+
+// Step 5 exit: no window works, so the homeowner asks for a text when one opens.
+export async function joinWaitlist(tenantId: string, input: WaitlistInput, ip: string | null) {
+  await db.transaction(async (tx) => {
+    await checkServiceAndZip(tenantId, input.serviceId, input.zip, tx)
+    const customer = await findOrAddCustomer(tenantId, input, tx)
+    await queries.insertWaitlistEntry(
+      tenantId,
+      {
+        customerId: customer.id,
+        serviceId: input.serviceId,
+        zip: input.zip,
+        priority: input.vulnerableOccupant,
+      },
+      tx,
+    )
+    await booking.insertConsent(
+      tenantId,
+      {
+        contact: input.phone,
+        channel: 'sms',
+        granted: true,
+        source: 'booking_form',
+        wording: WAITLIST_CONSENT_WORDING,
+        ip,
+      },
+      tx,
+    )
+  })
+}
+
+// Step 6: saves the homeowner and their address, and books the arrival window. There is no
+// online payment: the visit fee and any priority fee are paid to the technician at the visit.
+export async function bookVisit(tenant: Tenant, input: BookingInput, ip: string | null) {
+  // The fee applies only when the contractor offers priority service and the homeowner chose it.
+  const priorityFeeCents = input.priorityService ? tenant.priorityFeeCents : 0
+
+  const job = await db.transaction(async (tx) => {
+    await checkServiceAndZip(tenant.id, input.serviceId, input.zip, tx)
+    const slot = await reserveOpenWindow(tx, tenant.id, input.windowId, input.date)
+
+    const customer = await findOrAddCustomer(tenant.id, input, tx)
+    const property =
+      (await customers.findPropertyAt(tenant.id, customer.id, input, tx)) ??
+      (await customers.insertProperty(
+        tenant.id,
+        {
+          customerId: customer.id,
+          street: input.street,
+          unit: input.unit || null,
+          city: input.city,
+          state: input.state,
+          zip: input.zip,
+        },
+        tx,
+      ))
+
+    const job = await booking.insertJob(
+      tenant.id,
+      {
+        customerId: customer.id,
+        propertyId: property.id,
+        serviceId: input.serviceId,
+        status: 'booked',
+        bookedAt: new Date(),
+        source: 'web',
+        priority: input.vulnerableOccupant || priorityFeeCents > 0,
+        priorityFeeCents,
+        problem: input.problem,
+        systemType: input.systemType,
+        vulnerableOccupant: input.vulnerableOccupant,
+        ...slot,
+      },
+      tx,
+    )
+
+    if (input.consent) {
+      await recordConsent(tenant.id, { phone: input.phone, granted: true, ip, jobId: job.id }, tx)
+    }
+    // The booking this draft was for is made. An unknown token is ignored: a draft must never
+    // stop a booking.
+    const draft = input.draftToken
+      ? await queries.findOpenDraft(tenant.id, input.draftToken, tx)
+      : undefined
+    if (draft) await queries.markDraftBooked(tenant.id, draft.id, job.id, tx)
+
+    await audit.insertHomeownerAction(
+      tenant.id,
+      {
+        action: 'job.booked',
+        entityType: 'job',
+        entityId: job.id,
+        data: { source: 'web', date: input.date, windowId: input.windowId, priorityFeeCents },
+      },
+      tx,
+    )
+    return job
+  })
+
+  // The booking shows on the office's dispatch board right away.
+  emitToTenant(tenant.id, 'booking.created', { jobId: job.id, dates: [input.date] })
+  return { jobId: job.id }
+}
+
+// Run every minute by the 'hold-expiry' job. Returns how many holds expired. Online booking
+// no longer creates holds; this stays for any job that is still 'held'.
+export function expireHolds() {
+  return queries.expireHolds()
+}
+
+// Run every 5 minutes by the 'booking-recovery' job: homeowners who agreed to texts and stopped
+// partway get one text with a link back to their draft. Returns how many were texted.
+export async function sendRecoveryTexts() {
+  const now = Date.now()
+  const drafts = await queries.listDraftsToRecover(
+    new Date(now - RECOVERY_WAIT_MINUTES * 60_000),
+    new Date(now - RECOVERY_CUTOFF_HOURS * 3_600_000),
+  )
+  for (const draft of drafts) {
+    // Together, so a draft is never marked without its text, and never texted twice.
+    await db.transaction(async (tx) => {
+      await sendText(
+        draft.tenantId,
+        {
+          contact: draft.phone,
+          kind: 'abandoned_booking',
+          body: `${draft.tenantName}: you started booking a visit. Finish here: ${bookingLink(draft, draft.token)} Reply STOP to opt out.`,
+        },
+        tx,
+      )
+      await queries.markDraftTexted(draft.tenantId, draft.id, tx)
+    })
+  }
+  return drafts.length
+}
+
+// The address of a contractor's booking page that opens a draft: their own domain once it is
+// verified, else their subdomain. Always https with no port, which is wrong on a developer's
+// machine; fine while texts are only saved (docs/real-texting-todo.md).
+function bookingLink(
+  tenant: { slug: string; customDomain: string | null; customDomainVerifiedAt: Date | null },
+  token: string,
+) {
+  const host =
+    tenant.customDomain && tenant.customDomainVerifiedAt
+      ? tenant.customDomain
+      : `${tenant.slug}.${env.APP_DOMAIN}`
+  return `https://${host}/?resume=${token}`
+}
+
+async function checkServiceAndZip(tenantId: string, serviceId: string, zip: string, tx: Db) {
+  if (!(await booking.findActiveService(tenantId, serviceId, tx))) {
+    throw new HttpError(404, 'not_found', SERVICE_GONE)
+  }
+  await checkZipServed(tenantId, zip, tx)
+}
+
+async function checkZipServed(tenantId: string, zip: string, tx: Db = db) {
+  if (!(await zipIsServed(tenantId, zip, tx))) {
+    throw new HttpError(422, 'outside_area', `We don’t serve ZIP code ${zip} yet.`)
+  }
+}
+
+// The consent wording covers texts and calls, so one row is written for each, as proof.
+async function recordConsent(
+  tenantId: string,
+  values: { phone: string; granted: boolean; ip: string | null; jobId?: string },
+  tx: Db,
+) {
+  for (const channel of ['sms', 'voice'] as const) {
+    await booking.insertConsent(
+      tenantId,
+      {
+        contact: values.phone,
+        channel,
+        granted: values.granted,
+        source: 'booking_form',
+        wording: CONSENT_WORDING,
+        jobId: values.jobId,
+        ip: values.ip,
+      },
+      tx,
+    )
+  }
+}
+
+// Takes a place in the window like the office does, but never over the cap, never in a window
+// that already started, and without telling a homeowner how many jobs are booked.
+async function reserveOpenWindow(tx: Tx, tenantId: string, windowId: string, date: string) {
+  let slot: Awaited<ReturnType<typeof reserveWindow>>
+  try {
+    slot = await reserveWindow(tx, tenantId, windowId, date, { allowOverCap: false })
+  } catch (error) {
+    if (error instanceof HttpError && error.code === 'window_full') {
+      throw new HttpError(
+        409,
+        'window_full',
+        'That arrival window just filled up. Pick another one.',
+      )
+    }
+    throw error
+  }
+  if (slot.windowStartsAt <= new Date()) {
+    throw new HttpError(
+      422,
+      'window_started',
+      'That arrival window has already started. Pick a later one.',
+    )
+  }
+  return slot
+}
+
+// A homeowner who booked or called before keeps one customer record, matched by phone.
+async function findOrAddCustomer(
+  tenantId: string,
+  input: { name: string; phone: string; email?: string },
+  tx: Db,
+) {
+  return (
+    (await customers.findCustomerByPhone(tenantId, input.phone, tx)) ??
+    (await customers.insertCustomer(
+      tenantId,
+      { name: input.name, phone: input.phone, email: input.email, source: 'booking' },
+      tx,
+    ))
+  )
+}

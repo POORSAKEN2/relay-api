@@ -13,3 +13,12 @@ type UserAction = {
 export async function insertUserAction(tenantId: string | null, event: UserAction, tx: Db = db) {
   await tx.insert(auditEvents).values({ tenantId, actorType: 'user', ...event })
 }
+
+// Something a homeowner did on the booking page. They have no account, so there is no actor id.
+export async function insertHomeownerAction(
+  tenantId: string,
+  event: Omit<UserAction, 'actorUserId'>,
+  tx: Db = db,
+) {
+  await tx.insert(auditEvents).values({ tenantId, actorType: 'homeowner', ...event })
+}
