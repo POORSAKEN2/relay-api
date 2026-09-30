@@ -119,6 +119,10 @@ export const users = pgTable(
     email: text('email').unique(), // office sign-in; technicians may have none
     phone: text('phone').unique(), // technician SMS sign-in and alerts
     passwordHash: text('password_hash'), // scrypt params + salt + hash
+    photoUrl: text('photo_url'), // optional profile photo
+    address: text('address'), // required for technicians (users_technician_profile)
+    emergencyContactName: text('emergency_contact_name'), // required for technicians
+    emergencyContactPhone: text('emergency_contact_phone'), // required for technicians
     disabledAt: timestamptz('disabled_at'), // deactivated users keep their history
     createdAt: createdAt(),
   },
@@ -129,6 +133,12 @@ export const users = pgTable(
     check('users_tenant_matches_role', sql`(${t.role} = 'superadmin') = (${t.tenantId} is null)`),
     check('users_email_lowercase', sql`${t.email} = lower(${t.email})`),
     check('users_phone_e164', e164(t.phone)),
+    check('users_emergency_contact_phone_e164', e164(t.emergencyContactPhone)),
+    // Owners and office staff don't need these; technicians must have all three.
+    check(
+      'users_technician_profile',
+      sql`${t.role} <> 'technician' or (${t.address} is not null and ${t.emergencyContactName} is not null and ${t.emergencyContactPhone} is not null)`,
+    ),
     check(
       'users_sign_in_method',
       sql`(${t.role} = 'technician' and ${t.phone} is not null) or (${t.role} <> 'technician' and ${t.email} is not null)`,

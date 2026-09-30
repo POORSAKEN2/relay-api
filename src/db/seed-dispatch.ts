@@ -45,7 +45,7 @@ type VisitSeed = {
 
 export type DispatchSeed = {
   timezone: string
-  technicians: [name: string, phone: string][]
+  technicians: [name: string, phone: string, address: string][]
   zips: string[]
   customers: CustomerSeed[]
   visits: VisitSeed[]
@@ -65,11 +65,14 @@ export async function seedDispatch(tenantId: string, seed: DispatchSeed) {
   const technicians = await db
     .insert(users)
     .values(
-      seed.technicians.map(([name, phone]) => ({
+      seed.technicians.map(([name, phone, address]) => ({
         tenantId,
         role: 'technician' as const,
         name,
         phone,
+        address,
+        emergencyContactName: `Emergency contact for ${name}`,
+        emergencyContactPhone: '+14805550100',
       })),
     )
     .returning()

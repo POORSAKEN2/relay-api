@@ -17,6 +17,10 @@ function selectTechnicians(tx: Db) {
       name: users.name,
       phone: users.phone,
       email: users.email,
+      photoUrl: users.photoUrl,
+      address: users.address,
+      emergencyContactName: users.emergencyContactName,
+      emergencyContactPhone: users.emergencyContactPhone,
       disabledAt: users.disabledAt,
       upcomingJobs: sql<number>`(${tx
         .select({ count: sql`count(*)::int` })
@@ -50,10 +54,17 @@ export async function findTechnician(tenantId: string, technicianId: string, tx:
   return technician
 }
 
-export async function insertTechnician(
-  tenantId: string,
-  values: { name: string; phone: string; email: string | null },
-) {
+type TechnicianValues = {
+  name: string
+  phone: string
+  email: string | null
+  photoUrl: string | null
+  address: string
+  emergencyContactName: string
+  emergencyContactPhone: string
+}
+
+export async function insertTechnician(tenantId: string, values: TechnicianValues) {
   const [technician] = await db
     .insert(users)
     .values({ ...values, tenantId, role: 'technician' })
@@ -65,7 +76,7 @@ export async function insertTechnician(
 export async function updateTechnician(
   tenantId: string,
   technicianId: string,
-  values: Partial<Pick<typeof users.$inferInsert, 'name' | 'phone' | 'email' | 'disabledAt'>>,
+  values: Partial<TechnicianValues & Pick<typeof users.$inferInsert, 'disabledAt'>>,
   tx: Db = db,
 ) {
   const [technician] = await tx
