@@ -10,6 +10,7 @@ import { errorHandler } from './middleware/error-handler.ts'
 import { accountsRoutes } from './modules/accounts/accounts.routes.ts'
 import { bookingRoutes } from './modules/booking/booking.routes.ts'
 import { brandingRoutes } from './modules/branding/branding.routes.ts'
+import { catalogRoutes } from './modules/catalog/catalog.routes.ts'
 import { customersRoutes } from './modules/customers/customers.routes.ts'
 import { dispatchRoutes } from './modules/dispatch/dispatch.routes.ts'
 import { teamRoutes } from './modules/team/team.routes.ts'
@@ -41,6 +42,7 @@ export function createApp() {
     accountsRoutes,
     brandingRoutes,
     bookingRoutes,
+    catalogRoutes,
     customersRoutes,
     dispatchRoutes,
     teamRoutes,

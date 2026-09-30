@@ -97,8 +97,8 @@ The seed creates one contractor, **Desert Breeze Air** (slug `desert`), with 3 t
 
 | Account | Role | Lands on |
 |---|---|---|
-| `owner@desert.test` | Contractor owner | `/dashboard` (dispatch board), `/technicians` |
-| `office@desert.test` | Office staff | `/dashboard`, `/technicians` |
+| `owner@desert.test` | Contractor owner | `/dashboard` (dispatch board), `/technicians`, `/services` |
+| `office@desert.test` | Office staff | `/dashboard`, `/technicians`, `/services` |
 | `admin@relay.test` | Relay superadmin | `/admin` (contractor branding) |
 
 Every demo account uses the same development password: the `DEV_PASSWORD` value in [src/db/seed.ts](src/db/seed.ts).

@@ -1,6 +1,8 @@
 import { db } from '../../db/client.ts'
+import { PROFILE_PHOTO_MAX_BYTES } from '../../db/schema.ts'
 import { violatedUniqueConstraint } from '../../lib/db-errors.ts'
 import { HttpError } from '../../lib/http-error.ts'
+import { photoTypeOf } from '../../lib/image-type.ts'
 import { emitToTenant } from '../../realtime/index.ts'
 import type { SessionUser } from '../accounts/accounts.service.ts'
 import * as audit from '../audit/audit.queries.ts'
@@ -15,8 +17,14 @@ const NOT_ON_TEAM = 'That technician isn’t on your team.'
 
 type TechnicianRow = NonNullable<Awaited<ReturnType<typeof queries.findTechnician>>>
 
-function toTechnician({ disabledAt, ...row }: TechnicianRow) {
-  return { ...row, active: disabledAt === null }
+// `photoUrl` is a path under the API. Its `v` changes with every new photo, so browsers can
+// keep a photo for good and still pick up a replacement.
+function toTechnician({ disabledAt, photoUpdatedAt, ...row }: TechnicianRow) {
+  return {
+    ...row,
+    photoUrl: photoUpdatedAt && `/technicians/${row.id}/photo?v=${photoUpdatedAt.getTime()}`,
+    active: disabledAt === null,
+  }
 }
 
 export async function list(tenantId: string) {
@@ -26,11 +34,7 @@ export async function list(tenantId: string) {
 export async function add(user: SessionUser, input: TechnicianInput) {
   const tenantId = tenantOf(user)
   const { id } = await saveOrExplain(() =>
-    queries.insertTechnician(tenantId, {
-      ...input,
-      email: input.email ?? null,
-      photoUrl: input.photoUrl ?? null,
-    }),
+    queries.insertTechnician(tenantId, { ...input, email: input.email ?? null }),
   )
   await audit.insertUserAction(tenantId, {
     actorUserId: user.id,
@@ -46,11 +50,7 @@ export async function add(user: SessionUser, input: TechnicianInput) {
 export async function update(user: SessionUser, technicianId: string, input: TechnicianInput) {
   const tenantId = tenantOf(user)
   const updated = await saveOrExplain(() =>
-    queries.updateTechnician(tenantId, technicianId, {
-      ...input,
-      email: input.email ?? null,
-      photoUrl: input.photoUrl ?? null,
-    }),
+    queries.updateTechnician(tenantId, technicianId, { ...input, email: input.email ?? null }),
   )
   if (!updated) throw new HttpError(404, 'not_found', NOT_ON_TEAM)
   await audit.insertUserAction(tenantId, {
@@ -110,6 +110,51 @@ export async function reactivate(user: SessionUser, technicianId: string) {
     entityId: technicianId,
   })
   emitToTenant(tenantId, 'team.updated', { tenantId })
+  return found(await queries.findTechnician(tenantId, technicianId))
+}
+
+// Saves the technician's photo over any they had. `body` is the raw upload: the browser has
+// already cropped and shrunk it, so the size limit only stops uploads that skipped that.
+export async function setPhoto(user: SessionUser, technicianId: string, body: unknown) {
+  const tenantId = tenantOf(user)
+  found(await queries.findTechnician(tenantId, technicianId))
+  const contentType = Buffer.isBuffer(body) ? photoTypeOf(body) : null
+  if (!Buffer.isBuffer(body) || !contentType) {
+    throw new HttpError(422, 'not_a_photo', 'Pick a JPEG, PNG or WebP photo.')
+  }
+  if (body.length > PROFILE_PHOTO_MAX_BYTES) {
+    throw new HttpError(413, 'photo_too_large', 'That photo is too large. Pick a smaller one.')
+  }
+  await queries.savePhoto(tenantId, technicianId, { contentType, data: body })
+  await audit.insertUserAction(tenantId, {
+    actorUserId: user.id,
+    action: 'user.photo_updated',
+    entityType: 'user',
+    entityId: technicianId,
+  })
+  emitToTenant(tenantId, 'team.updated', { tenantId })
+  return found(await queries.findTechnician(tenantId, technicianId))
+}
+
+export async function getPhoto(tenantId: string, technicianId: string) {
+  const photo = await queries.findPhoto(tenantId, technicianId)
+  if (!photo) throw new HttpError(404, 'not_found', 'That technician has no photo.')
+  return photo
+}
+
+// Back to their initials. Doing it twice is harmless.
+export async function removePhoto(user: SessionUser, technicianId: string) {
+  const tenantId = tenantOf(user)
+  found(await queries.findTechnician(tenantId, technicianId))
+  if (await queries.deletePhoto(tenantId, technicianId)) {
+    await audit.insertUserAction(tenantId, {
+      actorUserId: user.id,
+      action: 'user.photo_removed',
+      entityType: 'user',
+      entityId: technicianId,
+    })
+    emitToTenant(tenantId, 'team.updated', { tenantId })
+  }
   return found(await queries.findTechnician(tenantId, technicianId))
 }
 

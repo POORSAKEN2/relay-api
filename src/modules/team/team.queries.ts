@@ -1,6 +1,6 @@
 import { and, asc, eq, gte, inArray, sql } from 'drizzle-orm'
 import { type Db, db, type Tx } from '../../db/client.ts'
-import { jobs, sessions, signInCodes, tenants, users } from '../../db/schema.ts'
+import { jobs, sessions, signInCodes, tenants, userPhotos, users } from '../../db/schema.ts'
 
 // Tenant-scoped: every query takes tenantId first. Only technician accounts are touched here.
 
@@ -17,7 +17,7 @@ function selectTechnicians(tx: Db) {
       name: users.name,
       phone: users.phone,
       email: users.email,
-      photoUrl: users.photoUrl,
+      photoUpdatedAt: userPhotos.updatedAt, // null when they have no photo
       address: users.address,
       emergencyContactName: users.emergencyContactName,
       emergencyContactPhone: users.emergencyContactPhone,
@@ -35,6 +35,7 @@ function selectTechnicians(tx: Db) {
     })
     .from(users)
     .innerJoin(tenants, eq(tenants.id, users.tenantId))
+    .leftJoin(userPhotos, eq(userPhotos.userId, users.id))
 }
 
 const isTechnicianOf = (tenantId: string) =>
@@ -58,7 +59,6 @@ type TechnicianValues = {
   name: string
   phone: string
   email: string | null
-  photoUrl: string | null
   address: string
   emergencyContactName: string
   emergencyContactPhone: string
@@ -131,6 +131,33 @@ export async function unassignUpcomingJobs(tenantId: string, technicianId: strin
       )
   }
   return upcoming
+}
+
+type PhotoValues = Pick<typeof userPhotos.$inferInsert, 'contentType' | 'data'>
+
+// Saves the technician's photo over any they had.
+export async function savePhoto(tenantId: string, technicianId: string, photo: PhotoValues) {
+  await db
+    .insert(userPhotos)
+    .values({ ...photo, tenantId, userId: technicianId })
+    .onConflictDoUpdate({ target: userPhotos.userId, set: { ...photo, updatedAt: new Date() } })
+}
+
+export async function findPhoto(tenantId: string, technicianId: string) {
+  const [photo] = await db
+    .select({ contentType: userPhotos.contentType, data: userPhotos.data })
+    .from(userPhotos)
+    .where(and(eq(userPhotos.tenantId, tenantId), eq(userPhotos.userId, technicianId)))
+  return photo
+}
+
+// True when there was a photo to remove.
+export async function deletePhoto(tenantId: string, technicianId: string) {
+  const removed = await db
+    .delete(userPhotos)
+    .where(and(eq(userPhotos.tenantId, tenantId), eq(userPhotos.userId, technicianId)))
+    .returning({ userId: userPhotos.userId })
+  return removed.length > 0
 }
 
 // Signs the user out everywhere and voids any sign-in codes they were sent.
