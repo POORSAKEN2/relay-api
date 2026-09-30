@@ -21,6 +21,19 @@ vi.mock('../../realtime/index.ts', () => ({ emitToTenant: vi.fn() }))
 
 const app = createApp()
 
+// The details every new technician needs besides name and phone.
+const PROFILE = {
+  address: '12 Palm St, Phoenix, AZ 85004',
+  emergencyContactName: 'Dana Torres',
+  emergencyContactPhone: '(602) 555-0188',
+}
+const PROFILE_SAVED = {
+  address: '12 Palm St, Phoenix, AZ 85004',
+  emergencyContactName: 'Dana Torres',
+  emergencyContactPhone: '+16025550188',
+  photoUrl: null,
+}
+
 beforeEach(async () => {
   await resetDb()
   vi.mocked(emitToTenant).mockClear()
@@ -48,6 +61,9 @@ describe('GET /api/technicians', () => {
         role: 'technician',
         name: 'Zed',
         phone: '+14805550999',
+        address: '9 Zed Rd, Phoenix, AZ 85004',
+        emergencyContactName: 'Zed Contact',
+        emergencyContactPhone: '+14805550100',
         disabledAt: new Date(),
       })
       .returning()
@@ -61,6 +77,10 @@ describe('GET /api/technicians', () => {
         name: 'Ana',
         phone: shop.ana.phone,
         email: null,
+        photoUrl: null,
+        address: '1 Test St, Phoenix, AZ 85004',
+        emergencyContactName: 'Test Contact',
+        emergencyContactPhone: '+14805550100',
         active: true,
         upcomingJobs: 0,
       },
@@ -69,6 +89,10 @@ describe('GET /api/technicians', () => {
         name: 'Mike',
         phone: shop.mike.phone,
         email: null,
+        photoUrl: null,
+        address: '1 Test St, Phoenix, AZ 85004',
+        emergencyContactName: 'Test Contact',
+        emergencyContactPhone: '+14805550100',
         active: true,
         upcomingJobs: 2, // booked and no-access from today on; not done, not past
       },
@@ -77,6 +101,10 @@ describe('GET /api/technicians', () => {
         name: 'Zed',
         phone: '+14805550999',
         email: null,
+        photoUrl: null,
+        address: '9 Zed Rd, Phoenix, AZ 85004',
+        emergencyContactName: 'Zed Contact',
+        emergencyContactPhone: '+14805550100',
         active: false,
         upcomingJobs: 0,
       },
@@ -113,6 +141,8 @@ describe('POST /api/technicians', () => {
       name: '  Luis Moreno ',
       phone: '(480) 555-0303',
       email: 'Luis@Example.com',
+      ...PROFILE,
+      photoUrl: 'https://cdn.example.com/luis.jpg',
     }).expect(201)
 
     expect(res.body.technician).toEqual({
@@ -120,6 +150,8 @@ describe('POST /api/technicians', () => {
       name: 'Luis Moreno',
       phone: '+14805550303',
       email: 'luis@example.com',
+      ...PROFILE_SAVED,
+      photoUrl: 'https://cdn.example.com/luis.jpg',
       active: true,
       upcomingJobs: 0,
     })
@@ -146,19 +178,49 @@ describe('POST /api/technicians', () => {
   it('explains bad input field by field', async () => {
     const shop = await createShop('desert')
 
-    const res = await addTechnician(shop, { name: '', phone: '555', email: 'nope' }).expect(400)
+    const res = await addTechnician(shop, {
+      name: '',
+      phone: '555',
+      email: 'nope',
+      address: ' ',
+      emergencyContactName: '',
+      emergencyContactPhone: '12',
+      photoUrl: 'not a link',
+    }).expect(400)
     expect(res.body.error.details).toEqual({
       name: ['Enter the technician’s name'],
       phone: ['Enter a 10-digit phone number'],
       email: ['Enter a valid email address'],
+      address: ['Enter the technician’s address'],
+      emergencyContactName: ['Enter an emergency contact name'],
+      emergencyContactPhone: ['Enter a 10-digit phone number'],
+      photoUrl: ['Enter a valid image link'],
     })
   })
 
   it('treats a blank email as no email', async () => {
     const shop = await createShop('desert')
-    const res = await addTechnician(shop, { name: 'Luis', phone: '4805550303', email: '' })
+    const res = await addTechnician(shop, {
+      name: 'Luis',
+      phone: '4805550303',
+      email: '',
+      ...PROFILE,
+    })
     expect(res.status).toBe(201)
     expect(res.body.technician.email).toBeNull()
+  })
+
+  it('needs an address and emergency contact, but not a photo', async () => {
+    const shop = await createShop('desert')
+    const res = await addTechnician(shop, { name: 'Luis', phone: '4805550303' }).expect(400)
+    expect(Object.keys(res.body.error.details).sort()).toEqual([
+      'address',
+      'emergencyContactName',
+      'emergencyContactPhone',
+    ])
+    const ok = await addTechnician(shop, { name: 'Luis', phone: '4805550303', ...PROFILE })
+    expect(ok.status).toBe(201)
+    expect(ok.body.technician.photoUrl).toBeNull()
   })
 
   it('refuses a phone number or email another account already uses', async () => {
@@ -166,7 +228,11 @@ describe('POST /api/technicians', () => {
     const other = await createShop('other')
     const office = await createUser('office', shop.tenant.id)
 
-    const phone = await addTechnician(shop, { name: 'Luis', phone: other.mike.phone }).expect(409)
+    const phone = await addTechnician(shop, {
+      name: 'Luis',
+      phone: other.mike.phone,
+      ...PROFILE,
+    }).expect(409)
     expect(phone.body.error).toEqual({
       code: 'phone_taken',
       message: 'That phone number is already used by another account.',
@@ -176,6 +242,7 @@ describe('POST /api/technicians', () => {
       name: 'Luis',
       phone: '4805550303',
       email: office.email,
+      ...PROFILE,
     }).expect(409)
     expect(email.body.error).toEqual({
       code: 'email_taken',
@@ -191,13 +258,19 @@ describe('PATCH /api/technicians/:technicianId', () => {
     const res = await request(app)
       .patch(`/api/technicians/${shop.mike.id}`)
       .set('Cookie', shop.cookie)
-      .send({ name: 'Mike Torres', phone: '602-555-0404', email: 'mike@desert.test' })
+      .send({
+        name: 'Mike Torres',
+        phone: '602-555-0404',
+        email: 'mike@desert.test',
+        ...PROFILE,
+      })
       .expect(200)
 
     expect(res.body.technician).toMatchObject({
       name: 'Mike Torres',
       phone: '+16025550404',
       email: 'mike@desert.test',
+      ...PROFILE_SAVED,
     })
     const [audit] = await db.select().from(auditEvents)
     expect(audit).toMatchObject({ action: 'user.updated', entityId: shop.mike.id })
@@ -214,7 +287,7 @@ describe('PATCH /api/technicians/:technicianId', () => {
       const res = await request(app)
         .patch(`/api/technicians/${id}`)
         .set('Cookie', shop.cookie)
-        .send({ name: 'Hijacked', phone: '4805550303' })
+        .send({ name: 'Hijacked', phone: '4805550303', ...PROFILE })
         .expect(404)
       expect(res.body.error.message).toBe('That technician isn’t on your team.')
     }
@@ -225,7 +298,7 @@ describe('PATCH /api/technicians/:technicianId', () => {
     const res = await request(app)
       .patch(`/api/technicians/${shop.mike.id}`)
       .set('Cookie', shop.cookie)
-      .send({ name: 'Mike', phone: shop.ana.phone })
+      .send({ name: 'Mike', phone: shop.ana.phone, ...PROFILE })
       .expect(409)
     expect(res.body.error.code).toBe('phone_taken')
   })

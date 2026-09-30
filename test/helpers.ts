@@ -35,6 +35,13 @@ export async function createTenant(slug: string) {
   return tenant
 }
 
+// The details every technician must have.
+const technicianProfile = () => ({
+  address: '1 Test St, Phoenix, AZ 85004',
+  emergencyContactName: 'Test Contact',
+  emergencyContactPhone: '+14805550100',
+})
+
 // Every test user gets an email; technicians also get the phone they sign in with.
 export async function createUser(role: UserRole, tenantId: string | null) {
   const email = `${role}-${randomUUID()}@test.local`
@@ -43,6 +50,7 @@ export async function createUser(role: UserRole, tenantId: string | null) {
     .values({
       email,
       phone: role === 'technician' ? `+1480${randomInt(1_000_000, 10_000_000)}` : null,
+      ...(role === 'technician' ? technicianProfile() : {}),
       name: `Test ${role}`,
       role,
       tenantId,
@@ -119,6 +127,7 @@ export async function createTechnician(tenantId: string, name: string) {
       role: 'technician',
       name,
       phone: `+1480${randomInt(1_000_000, 10_000_000)}`,
+      ...technicianProfile(),
     })
     .returning()
   return user

@@ -26,7 +26,11 @@ export async function list(tenantId: string) {
 export async function add(user: SessionUser, input: TechnicianInput) {
   const tenantId = tenantOf(user)
   const { id } = await saveOrExplain(() =>
-    queries.insertTechnician(tenantId, { ...input, email: input.email ?? null }),
+    queries.insertTechnician(tenantId, {
+      ...input,
+      email: input.email ?? null,
+      photoUrl: input.photoUrl ?? null,
+    }),
   )
   await audit.insertUserAction(tenantId, {
     actorUserId: user.id,
@@ -42,7 +46,11 @@ export async function add(user: SessionUser, input: TechnicianInput) {
 export async function update(user: SessionUser, technicianId: string, input: TechnicianInput) {
   const tenantId = tenantOf(user)
   const updated = await saveOrExplain(() =>
-    queries.updateTechnician(tenantId, technicianId, { ...input, email: input.email ?? null }),
+    queries.updateTechnician(tenantId, technicianId, {
+      ...input,
+      email: input.email ?? null,
+      photoUrl: input.photoUrl ?? null,
+    }),
   )
   if (!updated) throw new HttpError(404, 'not_found', NOT_ON_TEAM)
   await audit.insertUserAction(tenantId, {

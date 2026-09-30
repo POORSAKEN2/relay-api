@@ -22,6 +22,13 @@
       "when": 1790672764566,
       "tag": "0002_audit_events_append_only",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790747146785,
+      "tag": "0003_technician_profile",
+      "breakpoints": true
     }
   ]
 }

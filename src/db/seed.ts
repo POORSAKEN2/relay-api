@@ -49,9 +49,9 @@ await db.insert(users).values([
 await seedDispatch(desert.id, {
   timezone: desert.timezone,
   technicians: [
-    ['Sam Patel', '+14805550301'],
-    ['Rita Gomez', '+14805550302'],
-    ['Luis Moreno', '+14805550303'],
+    ['Sam Patel', '+14805550301', '101 Cactus Ln, Phoenix, AZ 85004'],
+    ['Rita Gomez', '+14805550302', '202 Mesquite Dr, Tempe, AZ 85281'],
+    ['Luis Moreno', '+14805550303', '303 Saguaro Way, Mesa, AZ 85201'],
   ],
   zips: ['85004', '85008', '85014', '85201', '85251', '85281'],
   customers: [
