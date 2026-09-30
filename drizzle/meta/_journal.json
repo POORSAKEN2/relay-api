@@ -29,6 +29,13 @@
       "when": 1790747146785,
       "tag": "0003_technician_profile",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790753712491,
+      "tag": "0004_technician_photo_upload",
+      "breakpoints": true
     }
   ]
 }

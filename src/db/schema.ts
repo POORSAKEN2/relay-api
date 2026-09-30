@@ -2,6 +2,7 @@ import { type Column, sql } from 'drizzle-orm'
 import {
   boolean,
   check,
+  customType,
   date,
   foreignKey,
   index,
@@ -29,6 +30,7 @@ import {
 // - Foreign keys block deletes; only sessions and sign-in codes cascade.
 
 const timestamptz = (name: string) => timestamp(name, { withTimezone: true })
+const bytea = customType<{ data: Buffer }>({ dataType: () => 'bytea' })
 const createdAt = () => timestamptz('created_at').notNull().defaultNow()
 const tenantId = () =>
   uuid('tenant_id')
@@ -119,7 +121,6 @@ export const users = pgTable(
     email: text('email').unique(), // office sign-in; technicians may have none
     phone: text('phone').unique(), // technician SMS sign-in and alerts
     passwordHash: text('password_hash'), // scrypt params + salt + hash
-    photoUrl: text('photo_url'), // optional profile photo
     address: text('address'), // required for technicians (users_technician_profile)
     emergencyContactName: text('emergency_contact_name'), // required for technicians
     emergencyContactPhone: text('emergency_contact_phone'), // required for technicians
@@ -176,6 +177,34 @@ export const signInCodes = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index('sign_in_codes_user_id_idx').on(t.userId)],
+)
+
+export const PROFILE_PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const
+export const PROFILE_PHOTO_MAX_BYTES = 512 * 1024
+
+// A user's profile photo, one each. The browser shrinks it before upload, so the bytes live
+// here until file storage is chosen (Supabase Storage or Cloudflare R2).
+export const userPhotos = pgTable(
+  'user_photos',
+  {
+    userId: uuid('user_id').primaryKey(),
+    tenantId: tenantId(),
+    contentType: text('content_type', { enum: PROFILE_PHOTO_TYPES }).notNull(),
+    data: bytea('data').notNull(),
+    updatedAt: timestamptz('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    foreignKey({
+      name: 'user_photos_user_fk',
+      columns: [t.tenantId, t.userId],
+      foreignColumns: [users.tenantId, users.id],
+    }),
+    check('user_photos_content_type_valid', oneOf(t.contentType, PROFILE_PHOTO_TYPES)),
+    check(
+      'user_photos_size',
+      sql`octet_length(${t.data}) between 1 and ${sql.raw(String(PROFILE_PHOTO_MAX_BYTES))}`,
+    ),
+  ],
 )
 
 // Append-only: the newest row per tenant is the current branding.

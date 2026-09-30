@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { eq } from 'drizzle-orm'
+import { asc, eq } from 'drizzle-orm'
 import request from 'supertest'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -142,7 +142,6 @@ describe('POST /api/technicians', () => {
       phone: '(480) 555-0303',
       email: 'Luis@Example.com',
       ...PROFILE,
-      photoUrl: 'https://cdn.example.com/luis.jpg',
     }).expect(201)
 
     expect(res.body.technician).toEqual({
@@ -151,7 +150,6 @@ describe('POST /api/technicians', () => {
       phone: '+14805550303',
       email: 'luis@example.com',
       ...PROFILE_SAVED,
-      photoUrl: 'https://cdn.example.com/luis.jpg',
       active: true,
       upcomingJobs: 0,
     })
@@ -185,7 +183,6 @@ describe('POST /api/technicians', () => {
       address: ' ',
       emergencyContactName: '',
       emergencyContactPhone: '12',
-      photoUrl: 'not a link',
     }).expect(400)
     expect(res.body.error.details).toEqual({
       name: ['Enter the technician’s name'],
@@ -194,7 +191,6 @@ describe('POST /api/technicians', () => {
       address: ['Enter the technician’s address'],
       emergencyContactName: ['Enter an emergency contact name'],
       emergencyContactPhone: ['Enter a 10-digit phone number'],
-      photoUrl: ['Enter a valid image link'],
     })
   })
 
@@ -301,6 +297,191 @@ describe('PATCH /api/technicians/:technicianId', () => {
       .send({ name: 'Mike', phone: shop.ana.phone, ...PROFILE })
       .expect(409)
     expect(res.body.error.code).toBe('phone_taken')
+  })
+})
+
+// A real 1×1 PNG, and the first bytes that mark a JPEG and a WebP.
+const PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+  'base64',
+)
+const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00])
+const WEBP = Buffer.concat([
+  Buffer.from('RIFF'),
+  Buffer.from([0x1a, 0, 0, 0]),
+  Buffer.from('WEBPVP8 '),
+])
+
+function uploadPhoto(shop: Shop, technicianId: string, photo: Buffer, type = 'image/jpeg') {
+  return request(app)
+    .put(`/api/technicians/${technicianId}/photo`)
+    .set('Cookie', shop.cookie)
+    .set('Content-Type', type)
+    .send(photo)
+}
+
+function loadPhoto(shop: Shop, technicianId: string) {
+  return request(app).get(`/api/technicians/${technicianId}/photo`).set('Cookie', shop.cookie)
+}
+
+describe('PUT /api/technicians/:technicianId/photo', () => {
+  it('saves the photo and tells the list where to load it', async () => {
+    const shop = await createShop('desert')
+
+    const res = await uploadPhoto(shop, shop.mike.id, PNG).expect(200)
+
+    const { photoUrl } = res.body.technician
+    expect(photoUrl).toMatch(new RegExp(`^/technicians/${shop.mike.id}/photo\\?v=\\d+$`))
+    const list = await request(app).get('/api/technicians').set('Cookie', shop.cookie).expect(200)
+    const byName = (name: string) =>
+      list.body.technicians.find((technician: { name: string }) => technician.name === name)
+    expect(byName('Mike').photoUrl).toBe(photoUrl)
+    expect(byName('Ana').photoUrl).toBeNull()
+
+    const photo = await request(app).get(`/api${photoUrl}`).set('Cookie', shop.cookie).expect(200)
+    expect(photo.headers['content-type']).toBe('image/png') // from the bytes, not the upload's claim
+    expect(photo.headers['x-content-type-options']).toBe('nosniff')
+    expect(photo.headers['cache-control']).toBe('private, max-age=31536000, immutable')
+    expect(Buffer.compare(photo.body, PNG)).toBe(0)
+
+    const [audit] = await db.select().from(auditEvents)
+    expect(audit).toMatchObject({ action: 'user.photo_updated', entityId: shop.mike.id })
+    expect(emitToTenant).toHaveBeenCalledWith(shop.tenant.id, 'team.updated', {
+      tenantId: shop.tenant.id,
+    })
+  })
+
+  it('replaces the photo they had', async () => {
+    const shop = await createShop('desert')
+    await uploadPhoto(shop, shop.mike.id, PNG).expect(200)
+
+    await uploadPhoto(shop, shop.mike.id, WEBP, 'image/webp').expect(200)
+
+    const photo = await loadPhoto(shop, shop.mike.id).expect(200)
+    expect(photo.headers['content-type']).toBe('image/webp')
+    expect(Buffer.compare(photo.body, WEBP)).toBe(0)
+  })
+
+  it('takes JPEG, PNG and WebP, and nothing else', async () => {
+    const shop = await createShop('desert')
+    const types = { 'image/jpeg': JPEG, 'image/png': PNG, 'image/webp': WEBP }
+    for (const [type, bytes] of Object.entries(types)) {
+      await uploadPhoto(shop, shop.mike.id, bytes).expect(200)
+      expect((await loadPhoto(shop, shop.mike.id)).headers['content-type']).toBe(type)
+    }
+
+    const notImages = [
+      Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'),
+      Buffer.from('GIF89a'),
+      Buffer.alloc(0),
+    ]
+    for (const bytes of notImages) {
+      const res = await uploadPhoto(shop, shop.mike.id, bytes, 'image/png').expect(422)
+      expect(res.body.error).toEqual({
+        code: 'not_a_photo',
+        message: 'Pick a JPEG, PNG or WebP photo.',
+      })
+    }
+    const json = await request(app)
+      .put(`/api/technicians/${shop.mike.id}/photo`)
+      .set('Cookie', shop.cookie)
+      .send({ photo: 'https://cdn.example.com/mike.jpg' })
+      .expect(422)
+    expect(json.body.error.code).toBe('not_a_photo')
+    expect(Buffer.compare((await loadPhoto(shop, shop.mike.id)).body, WEBP)).toBe(0) // kept
+  })
+
+  it('refuses a photo over 512 KB', async () => {
+    const shop = await createShop('desert')
+    const atLimit = Buffer.concat([JPEG, Buffer.alloc(512 * 1024 - JPEG.length)])
+    await uploadPhoto(shop, shop.mike.id, atLimit).expect(200)
+
+    const res = await uploadPhoto(shop, shop.mike.id, Buffer.concat([atLimit, Buffer.alloc(1)]))
+    expect(res.status).toBe(413)
+    expect(res.body.error).toEqual({
+      code: 'photo_too_large',
+      message: 'That photo is too large. Pick a smaller one.',
+    })
+  })
+
+  it("only takes photos for this contractor's technicians", async () => {
+    const shop = await createShop('desert')
+    const other = await createShop('other')
+
+    for (const id of [other.mike.id, shop.office.id, randomUUID()]) {
+      const res = await uploadPhoto(shop, id, PNG).expect(404)
+      expect(res.body.error.message).toBe('That technician isn’t on your team.')
+    }
+    await loadPhoto(other, other.mike.id).expect(404)
+  })
+
+  it('is for owner and office staff only', async () => {
+    const shop = await createShop('desert')
+    const tech = await createUser('technician', shop.tenant.id)
+    const url = `/api/technicians/${shop.mike.id}/photo`
+
+    await request(app).put(url).set('Content-Type', 'image/png').send(PNG).expect(401)
+    await request(app)
+      .put(url)
+      .set('Cookie', await signIn(tech.email))
+      .set('Content-Type', 'image/png')
+      .send(PNG)
+      .expect(403)
+  })
+})
+
+describe('GET /api/technicians/:technicianId/photo', () => {
+  it('404s when the technician has no photo', async () => {
+    const shop = await createShop('desert')
+    const res = await loadPhoto(shop, shop.mike.id).expect(404)
+    expect(res.body.error.message).toBe('That technician has no photo.')
+  })
+
+  it("never shows another contractor's photo, or anyone signed out", async () => {
+    const shop = await createShop('desert')
+    const other = await createShop('other')
+    await uploadPhoto(shop, shop.mike.id, PNG).expect(200)
+
+    await loadPhoto(other, shop.mike.id).expect(404)
+    await request(app).get(`/api/technicians/${shop.mike.id}/photo`).expect(401)
+  })
+})
+
+describe('DELETE /api/technicians/:technicianId/photo', () => {
+  function removePhoto(shop: Shop, technicianId: string) {
+    return request(app).delete(`/api/technicians/${technicianId}/photo`).set('Cookie', shop.cookie)
+  }
+
+  it('removes the photo', async () => {
+    const shop = await createShop('desert')
+    await uploadPhoto(shop, shop.mike.id, PNG).expect(200)
+    vi.mocked(emitToTenant).mockClear()
+
+    const res = await removePhoto(shop, shop.mike.id).expect(200)
+
+    expect(res.body.technician).toMatchObject({ id: shop.mike.id, photoUrl: null })
+    await loadPhoto(shop, shop.mike.id).expect(404)
+    const audits = await db.select().from(auditEvents).orderBy(asc(auditEvents.createdAt))
+    expect(audits.at(-1)).toMatchObject({ action: 'user.photo_removed', entityId: shop.mike.id })
+    expect(emitToTenant).toHaveBeenCalledWith(shop.tenant.id, 'team.updated', {
+      tenantId: shop.tenant.id,
+    })
+  })
+
+  it('does nothing when there is no photo', async () => {
+    const shop = await createShop('desert')
+    const res = await removePhoto(shop, shop.mike.id).expect(200)
+    expect(res.body.technician.photoUrl).toBeNull()
+    expect(await db.select().from(auditEvents)).toEqual([])
+  })
+
+  it("leaves another contractor's photo alone", async () => {
+    const shop = await createShop('desert')
+    const other = await createShop('other')
+    await uploadPhoto(other, other.mike.id, PNG).expect(200)
+
+    await removePhoto(shop, other.mike.id).expect(404)
+    await loadPhoto(other, other.mike.id).expect(200)
   })
 })
 
