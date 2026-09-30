@@ -80,6 +80,8 @@ export const tenants = pgTable(
     messagingServiceSid: text('messaging_service_sid'), // Twilio Messaging Service for the campaign
     // Booking and messaging rules
     holdMinutes: smallint('hold_minutes').notNull().default(15), // still to decide
+    // Extra charge a homeowner can pay online to be seen first. 0 = not offered.
+    priorityFeeCents: integer('priority_fee_cents').notNull().default(0),
     quietHoursStart: time('quiet_hours_start').notNull().default('21:00'), // still to decide
     quietHoursEnd: time('quiet_hours_end').notNull().default('08:00'),
     reviewUrl: text('review_url'), // link in the review-request text
@@ -103,6 +105,7 @@ export const tenants = pgTable(
     check('tenants_office_ring_seconds_positive', sql`${t.officeRingSeconds} > 0`),
     check('tenants_texting_status_valid', oneOf(t.textingStatus, TEXTING_STATUSES)),
     check('tenants_hold_minutes_positive', sql`${t.holdMinutes} > 0`),
+    check('tenants_priority_fee_not_negative', sql`${t.priorityFeeCents} >= 0`),
     check('tenants_quiet_hours_window', sql`${t.quietHoursStart} <> ${t.quietHoursEnd}`),
     check('tenants_payment_provider_valid', oneOf(t.paymentProvider, PAYMENT_PROVIDERS)),
     check('tenants_fees_not_negative', sql`${t.monthlyFeeCents} >= 0 and ${t.perJobFeeCents} >= 0`),
@@ -519,6 +522,9 @@ export const jobs = pgTable(
     status: text('status', { enum: JOB_STATUSES }).notNull().default('held'),
     source: text('source', { enum: JOB_SOURCES }).notNull(),
     priority: boolean('priority').notNull().default(false),
+    // The contractor's priority fee when the homeowner chose priority service, copied at the
+    // time so a later fee change doesn't rewrite it. 0 = not chosen.
+    priorityFeeCents: integer('priority_fee_cents').notNull().default(0),
     // Intake
     problem: text('problem').notNull(),
     systemType: text('system_type', { enum: SYSTEM_TYPES }).notNull(),
@@ -568,6 +574,8 @@ export const jobs = pgTable(
     check('jobs_source_valid', oneOf(t.source, JOB_SOURCES)),
     check('jobs_system_type_valid', oneOf(t.systemType, SYSTEM_TYPES)),
     check('jobs_window_order', sql`${t.windowEndsAt} > ${t.windowStartsAt}`),
+    check('jobs_priority_fee_not_negative', sql`${t.priorityFeeCents} >= 0`),
+    check('jobs_priority_fee_needs_priority', sql`${t.priorityFeeCents} = 0 or ${t.priority}`),
     check('jobs_hold_has_expiry', sql`${t.status} <> 'held' or ${t.holdExpiresAt} is not null`),
     check(
       'jobs_visit_has_technician',
@@ -748,6 +756,53 @@ export const callbackRequests = pgTable(
     index('callback_requests_open_idx')
       .on(t.tenantId, t.createdAt)
       .where(sql`${t.resolvedAt} is null`),
+  ],
+)
+
+// What the booking wizard has been told so far. Every key is optional: a draft starts empty.
+// The arrival window is left out on purpose: open windows change, so a homeowner who comes
+// back picks one again.
+export type DraftAnswers = {
+  serviceId?: string
+  problem?: string
+  systemType?: (typeof SYSTEM_TYPES)[number]
+  vulnerableOccupant?: boolean
+  priorityService?: boolean
+}
+
+// An online booking somebody started and hasn't finished. Saved once they give a name and
+// phone, so a refresh resumes it and a recovery text can bring them back.
+export const bookingDrafts = pgTable(
+  'booking_drafts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: tenantId(),
+    // 32 random bytes as hex: the only key the browser and the resume link know. Stored as it
+    // is, unlike job links: the recovery job needs it to build the link, and it opens nothing
+    // this row doesn't already hold.
+    token: text('token').notNull().unique(),
+    name: text('name').notNull(),
+    phone: text('phone').notNull(),
+    zip: text('zip').notNull(),
+    answers: jsonb('answers').$type<DraftAnswers>().notNull().default({}),
+    smsConsent: boolean('sms_consent').notNull().default(false), // proof is in consent_events
+    lastActivityAt: timestamptz('last_activity_at').notNull().defaultNow(),
+    recoveryTextedAt: timestamptz('recovery_texted_at'), // null = not texted yet
+    bookedJobId: uuid('booked_job_id'), // set when the booking is made
+    createdAt: createdAt(),
+  },
+  (t) => [
+    foreignKey({
+      name: 'booking_drafts_booked_job_fk',
+      columns: [t.tenantId, t.bookedJobId],
+      foreignColumns: [jobs.tenantId, jobs.id],
+    }),
+    check('booking_drafts_phone_e164', e164(t.phone)),
+    check('booking_drafts_zip_format', sql`${t.zip} ~ '^[0-9]{5}$'`),
+    // The recovery job's queue: drafts that may still get their one text.
+    index('booking_drafts_recovery_idx')
+      .on(t.lastActivityAt)
+      .where(sql`${t.smsConsent} and ${t.bookedJobId} is null and ${t.recoveryTextedAt} is null`),
   ],
 )
 

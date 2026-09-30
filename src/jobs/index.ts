@@ -3,6 +3,7 @@ import { PgBoss } from 'pg-boss'
 import { env } from '../config/env.ts'
 import { logger } from '../lib/logger.ts'
 import * as accounts from '../modules/accounts/accounts.service.ts'
+import * as onlineBooking from '../modules/online-booking/online-booking.service.ts'
 
 const boss = new PgBoss(env.DATABASE_URL)
 
@@ -17,6 +18,18 @@ export async function startJobs() {
   await register('session-cleanup', { cron: '0 3 * * *' }, async () => {
     const deleted = await accounts.cleanupExpiredSessions()
     logger.info({ deleted }, 'Expired sessions deleted')
+  })
+
+  // Every minute: online-booking holds nobody paid for in time free their arrival window.
+  await register('hold-expiry', { cron: '* * * * *' }, async () => {
+    const expired = await onlineBooking.expireHolds()
+    if (expired > 0) logger.info({ expired }, 'Booking holds expired')
+  })
+
+  // Every 5 minutes: homeowners who stopped partway through booking get one text to finish.
+  await register('booking-recovery', { cron: '*/5 * * * *' }, async () => {
+    const texted = await onlineBooking.sendRecoveryTexts()
+    if (texted > 0) logger.info({ texted }, 'Booking recovery texts saved')
   })
 }
 

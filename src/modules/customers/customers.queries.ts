@@ -1,4 +1,4 @@
-import { and, asc, eq, ilike, inArray, or } from 'drizzle-orm'
+import { and, asc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
 import { type Db, db } from '../../db/client.ts'
 import { customers, properties } from '../../db/schema.ts'
 
@@ -9,6 +9,17 @@ export async function findCustomer(tenantId: string, customerId: string, tx: Db 
     .select()
     .from(customers)
     .where(and(eq(customers.tenantId, tenantId), eq(customers.id, customerId)))
+  return customer
+}
+
+// The customer with this phone number; the oldest one when several share it.
+export async function findCustomerByPhone(tenantId: string, phone: string, tx: Db = db) {
+  const [customer] = await tx
+    .select()
+    .from(customers)
+    .where(and(eq(customers.tenantId, tenantId), eq(customers.phone, phone)))
+    .orderBy(asc(customers.createdAt))
+    .limit(1)
   return customer
 }
 
@@ -40,6 +51,29 @@ export async function findProperty(
         eq(properties.id, propertyId),
       ),
     )
+  return property
+}
+
+// The customer's saved address on this street in this ZIP code, whatever the letter case.
+export async function findPropertyAt(
+  tenantId: string,
+  customerId: string,
+  { street, zip }: { street: string; zip: string },
+  tx: Db = db,
+) {
+  const [property] = await tx
+    .select()
+    .from(properties)
+    .where(
+      and(
+        eq(properties.tenantId, tenantId),
+        eq(properties.customerId, customerId),
+        eq(properties.zip, zip),
+        sql`lower(${properties.street}) = lower(${street})`,
+      ),
+    )
+    .orderBy(asc(properties.createdAt))
+    .limit(1)
   return property
 }
 
