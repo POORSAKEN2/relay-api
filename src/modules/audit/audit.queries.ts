@@ -5,7 +5,7 @@ type UserAction = {
   actorUserId: string
   action: string // 'job.booked', 'job.assigned', …
   entityType: string // 'job', 'customer', …
-  entityId: string
+  entityId?: string // left out when the action covers several rows, like a reorder
   data?: Record<string, unknown>
 }
 
