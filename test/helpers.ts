@@ -7,6 +7,7 @@ import {
   jobs,
   properties,
   services,
+  signInCodes,
   tenants,
   type UserRole,
   users,
@@ -165,6 +166,21 @@ export async function createJob(
 // Returns the Cookie header for later requests.
 export async function signIn(email: string): Promise<string> {
   const { token } = await accounts.signIn(email, PASSWORD)
+  return `${SESSION_COOKIE}=${token}`
+}
+
+// Starts a technician's session the way a texted code does, without the rate-limited route.
+// Returns the Cookie header for later requests.
+export async function signInTechnician(technician: {
+  id: string
+  phone: string | null
+}): Promise<string> {
+  await db.insert(signInCodes).values({
+    userId: technician.id,
+    codeHash: accounts.hashCode('123456'),
+    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+  })
+  const { token } = await accounts.signInWithCode(technician.phone!, '123456')
   return `${SESSION_COOKIE}=${token}`
 }
 

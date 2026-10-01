@@ -21,7 +21,9 @@ import { INACTIVE_STATUSES } from '../booking/booking.queries.ts'
 const technicians = alias(users, 'technicians')
 const authors = alias(users, 'authors')
 
-function local(column: PgColumn, format: string): SQL<string> {
+// A timestamp as the contractor's wall clock, e.g. 'YYYY-MM-DD' or 'HH24:MI:SS'. Needs
+// `tenants` joined. Also used by the technician job list.
+export function local(column: PgColumn, format: string): SQL<string> {
   return sql<string>`to_char(${column} at time zone ${tenants.timezone}, ${format})`
 }
 
