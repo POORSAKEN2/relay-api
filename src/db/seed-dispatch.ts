@@ -10,6 +10,7 @@ import {
   type JOB_STATUSES,
   jobNotes,
   jobs,
+  priceItems,
   properties,
   type SYSTEM_TYPES,
   serviceAreaZips,
@@ -59,6 +60,16 @@ const SERVICES = [
   { name: 'New-system estimate', priceType: 'free', priceCents: 0 },
 ] as const
 
+// The demo contractor's repair price list.
+const PRICE_ITEMS = [
+  { name: 'Capacitor replacement', priceCents: 18500 },
+  { name: 'Condenser fan motor', priceCents: 42500 },
+  { name: 'Contactor replacement', priceCents: 16500 },
+  { name: 'Drain line flush', priceCents: 12000 },
+  { name: 'Refrigerant (per lb)', priceCents: 9500 },
+  { name: 'Thermostat replacement', priceCents: 21000 },
+]
+
 const WINDOWS = { morning: ['08:00', '12:00'], afternoon: ['12:00', '16:00'] } as const
 const WORKDAYS = [1, 2, 3, 4, 5, 6] // Monday to Saturday
 
@@ -96,6 +107,7 @@ export async function seedDispatch(tenantId: string, seed: DispatchSeed) {
     .insert(services)
     .values(SERVICES.map((service, sortOrder) => ({ ...service, tenantId, sortOrder })))
     .returning()
+  await db.insert(priceItems).values(PRICE_ITEMS.map((item) => ({ ...item, tenantId })))
   await db.insert(serviceAreaZips).values(seed.zips.map((zip) => ({ tenantId, zip })))
 
   const customerRows = []

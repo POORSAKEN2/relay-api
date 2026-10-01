@@ -39,3 +39,24 @@ export const ServiceParams = z.object({
 export const ServiceOrderInput = z.object({
   ids: z.array(z.uuid()),
 })
+
+const PRICE_MESSAGE = 'Enter a price from $0 to $10,000'
+
+// Adding or editing a repair price. $0 is allowed (a free check); $10,000 is the most.
+export const PriceItemInput = z.object({
+  name: z
+    .string('Enter a name')
+    .trim()
+    .min(1, 'Enter a name')
+    .max(100, 'Keep the name to 100 characters or fewer'),
+  priceCents: z
+    .number(PRICE_MESSAGE)
+    .int(PRICE_MESSAGE)
+    .min(0, PRICE_MESSAGE)
+    .max(1_000_000, PRICE_MESSAGE),
+})
+export type PriceItemInput = z.infer<typeof PriceItemInput>
+
+export const PriceItemParams = z.object({
+  priceItemId: z.uuid('That price isn’t on your list.'),
+})
