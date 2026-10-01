@@ -71,3 +71,5 @@ export const BookingInput = z.object({
   draftToken: z.string().optional(), // the draft this booking finishes, when there is one
 })
 export type BookingInput = z.infer<typeof BookingInput>
+
+export const PhotoParams = z.object({ photoId: z.uuid('That photo link isn’t valid') })

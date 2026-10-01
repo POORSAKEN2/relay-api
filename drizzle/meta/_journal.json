@@ -50,6 +50,13 @@
       "when": 1790780622713,
       "tag": "0006_booking_drafts",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790839178865,
+      "tag": "0007_booking_photos",
+      "breakpoints": true
     }
   ]
 }

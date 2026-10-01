@@ -792,6 +792,7 @@ export const bookingDrafts = pgTable(
     createdAt: createdAt(),
   },
   (t) => [
+    unique().on(t.tenantId, t.id),
     foreignKey({
       name: 'booking_drafts_booked_job_fk',
       columns: [t.tenantId, t.bookedJobId],
@@ -803,6 +804,37 @@ export const bookingDrafts = pgTable(
     index('booking_drafts_recovery_idx')
       .on(t.lastActivityAt)
       .where(sql`${t.smsConsent} and ${t.bookedJobId} is null and ${t.recoveryTextedAt} is null`),
+  ],
+)
+
+export const BOOKING_PHOTO_MAX_BYTES = 1024 * 1024
+export const MAX_BOOKING_PHOTOS = 3
+
+// Photos of the unit a homeowner added on step 4 of the booking wizard. They stay with the
+// draft; a booked job finds them through booking_drafts.booked_job_id. The browser shrinks
+// them before upload, so the bytes live here like profile photos.
+export const bookingPhotos = pgTable(
+  'booking_photos',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: tenantId(),
+    draftId: uuid('draft_id').notNull(),
+    contentType: text('content_type', { enum: PROFILE_PHOTO_TYPES }).notNull(),
+    data: bytea('data').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    foreignKey({
+      name: 'booking_photos_draft_fk',
+      columns: [t.tenantId, t.draftId],
+      foreignColumns: [bookingDrafts.tenantId, bookingDrafts.id],
+    }),
+    check('booking_photos_content_type_valid', oneOf(t.contentType, PROFILE_PHOTO_TYPES)),
+    check(
+      'booking_photos_size',
+      sql`octet_length(${t.data}) between 1 and ${sql.raw(String(BOOKING_PHOTO_MAX_BYTES))}`,
+    ),
+    index('booking_photos_draft_idx').on(t.tenantId, t.draftId),
   ],
 )
 

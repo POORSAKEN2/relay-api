@@ -1,8 +1,14 @@
 import { randomBytes } from 'node:crypto'
 import { env } from '../../config/env.ts'
 import { type Db, db, type Tx } from '../../db/client.ts'
-import type { DraftAnswers, Tenant } from '../../db/schema.ts'
+import {
+  BOOKING_PHOTO_MAX_BYTES,
+  type DraftAnswers,
+  MAX_BOOKING_PHOTOS,
+  type Tenant,
+} from '../../db/schema.ts'
 import { HttpError } from '../../lib/http-error.ts'
+import { photoTypeOf } from '../../lib/image-type.ts'
 import { formatDay, formatWindow } from '../../lib/labels.ts'
 import { emitToTenant } from '../../realtime/index.ts'
 import * as audit from '../audit/audit.queries.ts'
@@ -39,6 +45,7 @@ export const WAITLIST_CONSENT_WORDING = 'Text me when a time opens up. Reply STO
 
 const SERVICE_GONE = 'That service isn’t offered anymore. Pick another one.'
 const DRAFT_GONE = 'That saved booking isn’t available anymore. Start a new one.'
+const PHOTO_GONE = 'That photo isn’t available anymore.'
 
 // Step 1: what the contractor offers and charges.
 export async function getOptions(tenant: Tenant) {
@@ -142,6 +149,60 @@ export async function getDraft(tenantId: string, token: string) {
     consent: draft.smsConsent,
     answers: draft.answers,
   }
+}
+
+// A draft photo as the wizard gets it. `url` is a path under the API, like a technician's
+// photoUrl; the web app puts the API's address in front.
+function draftPhoto(token: string, photoId: string) {
+  return { id: photoId, url: `/online-booking/drafts/${token}/photos/${photoId}` }
+}
+
+// Step 4: a photo of the unit, for a homeowner who isn't sure what they have. Adding one
+// counts as activity, like saving answers.
+export async function addDraftPhoto(tenantId: string, token: string, body: unknown) {
+  const contentType = Buffer.isBuffer(body) ? photoTypeOf(body) : null
+  if (!Buffer.isBuffer(body) || !contentType) {
+    throw new HttpError(422, 'not_a_photo', 'Pick a JPEG, PNG or WebP photo.')
+  }
+  if (body.length > BOOKING_PHOTO_MAX_BYTES) {
+    throw new HttpError(413, 'photo_too_large', 'That photo is too large. Pick a smaller one.')
+  }
+  return db.transaction(async (tx) => {
+    const draft = await queries.lockOpenDraft(tenantId, token, tx)
+    if (!draft) throw new HttpError(404, 'not_found', DRAFT_GONE)
+    const photos = await queries.listDraftPhotos(tenantId, draft.id, tx)
+    if (photos.length >= MAX_BOOKING_PHOTOS) {
+      throw new HttpError(409, 'too_many_photos', `You can add up to ${MAX_BOOKING_PHOTOS} photos.`)
+    }
+    const photo = await queries.insertDraftPhoto(
+      tenantId,
+      { draftId: draft.id, contentType, data: body },
+      tx,
+    )
+    await queries.updateDraft(tenantId, draft.id, {}, tx)
+    return { photo: draftPhoto(token, photo.id) }
+  })
+}
+
+export async function listDraftPhotos(tenantId: string, token: string) {
+  const draft = await queries.findOpenDraft(tenantId, token)
+  if (!draft) throw new HttpError(404, 'not_found', DRAFT_GONE)
+  const photos = await queries.listDraftPhotos(tenantId, draft.id)
+  return { photos: photos.map((photo) => draftPhoto(token, photo.id)) }
+}
+
+// Removing a photo that is already gone is harmless.
+export async function removeDraftPhoto(tenantId: string, token: string, photoId: string) {
+  const draft = await queries.findOpenDraft(tenantId, token)
+  if (!draft) throw new HttpError(404, 'not_found', DRAFT_GONE)
+  await queries.deleteDraftPhoto(tenantId, draft.id, photoId)
+  await queries.updateDraft(tenantId, draft.id, {})
+}
+
+export async function getDraftPhoto(token: string, photoId: string) {
+  const photo = await queries.findDraftPhoto(token, photoId)
+  if (!photo) throw new HttpError(404, 'not_found', PHOTO_GONE)
+  return photo
 }
 
 // Step 5 exit: no window works, so the homeowner asks for a text when one opens.
