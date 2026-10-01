@@ -1,4 +1,5 @@
 import { sql } from 'drizzle-orm'
+import { addBookedLines } from '../modules/charges/charges.service.ts'
 import { db } from './client.ts'
 import {
   arrivalWindows,
@@ -154,6 +155,7 @@ export async function seedDispatch(tenantId: string, seed: DispatchSeed) {
         completedAt: status === 'done' ? new Date() : null,
       })
       .returning()
+    await addBookedLines(tenantId, job.id, db)
     if (visit.note) {
       await db.insert(jobNotes).values({ tenantId, jobId: job.id, body: visit.note })
     }

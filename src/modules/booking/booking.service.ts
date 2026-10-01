@@ -4,6 +4,7 @@ import { formatDay, formatWindow, weekdayOf, weekdaysLabel } from '../../lib/lab
 import { emitToTenant } from '../../realtime/index.ts'
 import type { SessionUser } from '../accounts/accounts.service.ts'
 import * as audit from '../audit/audit.queries.ts'
+import * as charges from '../charges/charges.service.ts'
 import * as customers from '../customers/customers.queries.ts'
 import * as queries from './booking.queries.ts'
 import type { OfficeBookingInput } from './booking.schemas.ts'
@@ -121,7 +122,7 @@ export async function bookForOffice(user: SessionUser, input: OfficeBookingInput
       )
     }
 
-    const job = await queries.insertJob(
+    const job = await insertBookedJob(
       tenantId,
       {
         customerId: customer.id,
@@ -157,6 +158,18 @@ export async function bookForOffice(user: SessionUser, input: OfficeBookingInput
   emitToTenant(tenantId, 'booking.created', change)
   if (job.priority) emitToTenant(tenantId, 'booking.priority', change)
   return { jobId: job.id, date: input.date }
+}
+
+// Books a job and writes its booked lines (the service, and priority service when chosen) in
+// the same transaction. Every way of booking goes through here, so no job is without them.
+export async function insertBookedJob(
+  tenantId: string,
+  values: Parameters<typeof queries.insertJob>[1],
+  tx: Tx,
+) {
+  const job = await queries.insertJob(tenantId, values, tx)
+  await charges.addBookedLines(tenantId, job.id, tx)
+  return job
 }
 
 // Owner and office users always belong to a contractor (a database check guarantees it).

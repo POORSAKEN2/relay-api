@@ -18,6 +18,7 @@ import {
   auditEvents,
   consentEvents,
   customers,
+  jobItems,
   jobs,
   properties,
   services,
@@ -73,6 +74,45 @@ describe('GET /api/services', () => {
 })
 
 describe('POST /api/bookings', () => {
+  it('writes the booked service line at the price it was booked at', async () => {
+    const shop = await createShop('desert')
+
+    const res = await book(shop, newCustomerBooking(shop)).expect(201)
+    // A later price change doesn't touch the job.
+    await db.update(services).set({ priceCents: 9900 }).where(eq(services.id, shop.service.id))
+
+    const lines = await db.select().from(jobItems).where(eq(jobItems.jobId, res.body.jobId))
+    expect(lines).toEqual([
+      expect.objectContaining({
+        description: 'AC repair (diagnostic fee)',
+        quantity: 1,
+        unitPriceCents: 8900,
+        status: 'approved',
+        priceItemId: null,
+      }),
+    ])
+  })
+
+  it('writes a free service line at $0', async () => {
+    const shop = await createShop('desert')
+    const [estimate] = await db
+      .insert(services)
+      .values({
+        tenantId: shop.tenant.id,
+        name: 'New-system estimate',
+        priceType: 'free',
+        priceCents: 0,
+      })
+      .returning()
+
+    const res = await book(shop, newCustomerBooking(shop, { serviceId: estimate.id })).expect(201)
+
+    const lines = await db.select().from(jobItems).where(eq(jobItems.jobId, res.body.jobId))
+    expect(lines).toEqual([
+      expect.objectContaining({ description: 'New-system estimate (free)', unitPriceCents: 0 }),
+    ])
+  })
+
   it('books a new customer into a window and records consent', async () => {
     const shop = await createShop('desert')
 
