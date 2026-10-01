@@ -6,6 +6,7 @@ import { createJob, createShop, resetDb } from '../../../test/helpers.ts'
 import { createApp } from '../../app.ts'
 import { db } from '../../db/client.ts'
 import { bookingDrafts, bookingPhotos, serviceAreaZips } from '../../db/schema.ts'
+import { deleteIdlePhotos } from './online-booking.service.ts'
 
 vi.mock('../../realtime/index.ts', () => ({ emitToTenant: vi.fn() }))
 
@@ -142,5 +143,42 @@ describe('draft photos stay private', () => {
     await upload(token, JPEG).expect(404)
     await call('get', `drafts/${token}/photos`).expect(404)
     await request(app).get(`/api${url}`).expect(404)
+  })
+})
+
+// A draft straight in the database, with one photo. Returns the draft's id.
+async function insertDraftWithPhoto(
+  tenantId: string,
+  token: string,
+  values: Partial<typeof bookingDrafts.$inferInsert>,
+) {
+  const [draft] = await db
+    .insert(bookingDrafts)
+    .values({ tenantId, token, name: 'Sam Reed', phone: '+14805550199', zip: '85201', ...values })
+    .returning()
+  await db
+    .insert(bookingPhotos)
+    .values({ tenantId, draftId: draft.id, contentType: 'image/jpeg', data: JPEG })
+  return draft.id
+}
+
+describe('deleteIdlePhotos', () => {
+  it('deletes photos of drafts nobody booked or touched for 30 days, and keeps the rest', async () => {
+    const shop = await createShop('desert')
+    const job = await createJob(shop)
+    const daysAgo = (days: number) => new Date(Date.now() - days * 24 * 60 * 60_000)
+    await insertDraftWithPhoto(shop.tenant.id, 'idle', { lastActivityAt: daysAgo(31) })
+    const recent = await insertDraftWithPhoto(shop.tenant.id, 'recent', {
+      lastActivityAt: daysAgo(29),
+    })
+    const booked = await insertDraftWithPhoto(shop.tenant.id, 'booked', {
+      lastActivityAt: daysAgo(31),
+      bookedJobId: job.id,
+    })
+
+    expect(await deleteIdlePhotos()).toBe(1)
+
+    const left = await db.select({ draftId: bookingPhotos.draftId }).from(bookingPhotos)
+    expect(left.map((photo) => photo.draftId).sort()).toEqual([recent, booked].sort())
   })
 })

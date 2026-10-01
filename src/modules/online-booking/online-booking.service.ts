@@ -36,6 +36,9 @@ const DAYS_AHEAD = 14
 const RECOVERY_WAIT_MINUTES = 60
 const RECOVERY_CUTOFF_HOURS = 24
 
+// Photos on a draft nobody booked are kept this long after its last activity.
+const PHOTO_KEEP_DAYS = 30
+
 // Shown next to the consent checkboxes and stored with the consent as proof. The booking
 // page gets them from getOptions, so both sides always use the same words.
 // Still to decide: the final wording, after a US telecom lawyer reviews it.
@@ -312,6 +315,11 @@ export async function bookVisit(tenant: Tenant, input: BookingInput, ip: string 
 // no longer creates holds; this stays for any job that is still 'held'.
 export function expireHolds() {
   return queries.expireHolds()
+}
+
+// Run daily by the 'booking-photo-cleanup' job. Returns how many photos were deleted.
+export function deleteIdlePhotos() {
+  return queries.deleteIdleDraftPhotos(new Date(Date.now() - PHOTO_KEEP_DAYS * 24 * 60 * 60_000))
 }
 
 // Run every 5 minutes by the 'booking-recovery' job: homeowners who agreed to texts and stopped

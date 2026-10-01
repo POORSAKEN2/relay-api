@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, isNull, lt, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray, isNull, lt, sql } from 'drizzle-orm'
 import { type Db, db } from '../../db/client.ts'
 import {
   bookingDrafts,
@@ -243,4 +243,18 @@ export async function expireHolds() {
     .where(and(eq(jobs.status, 'held'), lt(jobs.holdExpiresAt, new Date())))
     .returning({ id: jobs.id })
   return expired.length
+}
+
+// Every contractor's photos on drafts that were never booked and quiet since `idleSince`.
+// Returns how many were deleted.
+export async function deleteIdleDraftPhotos(idleSince: Date) {
+  const idleDrafts = db
+    .select({ id: bookingDrafts.id })
+    .from(bookingDrafts)
+    .where(and(isNull(bookingDrafts.bookedJobId), lt(bookingDrafts.lastActivityAt, idleSince)))
+  const deleted = await db
+    .delete(bookingPhotos)
+    .where(inArray(bookingPhotos.draftId, idleDrafts))
+    .returning({ id: bookingPhotos.id })
+  return deleted.length
 }

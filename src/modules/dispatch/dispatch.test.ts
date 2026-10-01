@@ -8,18 +8,42 @@ import {
   createTechnician,
   createUser,
   resetDb,
+  type Shop,
   signIn,
   TUESDAY,
   WEDNESDAY,
 } from '../../../test/helpers.ts'
 import { createApp } from '../../app.ts'
 import { db } from '../../db/client.ts'
-import { auditEvents, jobs, users } from '../../db/schema.ts'
+import { auditEvents, bookingDrafts, bookingPhotos, jobs, users } from '../../db/schema.ts'
 import { emitToTenant } from '../../realtime/index.ts'
 
 vi.mock('../../realtime/index.ts', () => ({ emitToTenant: vi.fn() }))
 
 const app = createApp()
+
+// The first bytes that mark a JPEG.
+const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00])
+
+// A photo the homeowner added while booking `jobId` online: a booked draft with one photo.
+async function addBookingPhoto(shop: Shop, jobId: string, token: string) {
+  const [draft] = await db
+    .insert(bookingDrafts)
+    .values({
+      tenantId: shop.tenant.id,
+      token,
+      name: 'Sam Reed',
+      phone: '+14805550199',
+      zip: '85004',
+      bookedJobId: jobId,
+    })
+    .returning()
+  const [photo] = await db
+    .insert(bookingPhotos)
+    .values({ tenantId: shop.tenant.id, draftId: draft.id, contentType: 'image/jpeg', data: JPEG })
+    .returning()
+  return photo
+}
 
 beforeEach(async () => {
   await resetDb()
@@ -135,6 +159,7 @@ describe('GET /api/jobs/:jobId', () => {
     expect(res.body.notes).toEqual([
       expect.objectContaining({ body: 'Gate code 4321', authorName: 'Test office' }),
     ])
+    expect(res.body.photos).toEqual([]) // booked by the office: no homeowner photos
   })
 
   it("404s for another contractor's job", async () => {
@@ -145,6 +170,32 @@ describe('GET /api/jobs/:jobId', () => {
     expect(res.body.error.message).toBe(
       'This job isn’t on the board anymore. It may have been cancelled.',
     )
+  })
+
+  it("shows the homeowner's booking photos to staff only", async () => {
+    const shop = await createShop('desert')
+    const job = await createJob(shop)
+    const otherJob = await createJob(shop, { at: `${TUESDAY} 12:00` })
+    const photo = await addBookingPhoto(shop, job.id, 'token-a')
+    const otherPhoto = await addBookingPhoto(shop, otherJob.id, 'token-b')
+
+    const res = await request(app).get(`/api/jobs/${job.id}`).set('Cookie', shop.cookie).expect(200)
+    expect(res.body.photos).toEqual([{ id: photo.id, url: `/jobs/${job.id}/photos/${photo.id}` }])
+
+    const image = await request(app)
+      .get(`/api${res.body.photos[0].url}`)
+      .set('Cookie', shop.cookie)
+      .expect(200)
+    expect(image.headers['content-type']).toBe('image/jpeg')
+    expect(image.headers['x-content-type-options']).toBe('nosniff')
+    expect(Buffer.compare(image.body, JPEG)).toBe(0)
+
+    const wrongJob = await request(app)
+      .get(`/api/jobs/${job.id}/photos/${otherPhoto.id}`)
+      .set('Cookie', shop.cookie)
+      .expect(404)
+    expect(wrongJob.body.error.message).toBe('That photo isn’t on this job.')
+    await request(app).get(`/api/jobs/${job.id}/photos/${photo.id}`).expect(401)
   })
 })
 

@@ -51,9 +51,10 @@ export async function getBoard(tenantId: string, date: string) {
 }
 
 export async function getJob(tenantId: string, jobId: string) {
-  const [job, notes] = await Promise.all([
+  const [job, notes, photos] = await Promise.all([
     queries.findJobDetail(tenantId, jobId),
     queries.listNotes(tenantId, jobId),
+    queries.listJobPhotos(tenantId, jobId),
   ])
   if (!job) throw new HttpError(404, 'not_found', JOB_NOT_FOUND)
   const { localStart, localEnd, technicianId, technicianName, ...rest } = job
@@ -66,7 +67,16 @@ export async function getJob(tenantId: string, jobId: string) {
       allowedStatuses: TRANSITIONS[job.status] ?? [],
     },
     notes,
+    // `url` is a path under the API; the web app puts the API's address in front.
+    photos: photos.map((photo) => ({ id: photo.id, url: `/jobs/${jobId}/photos/${photo.id}` })),
   }
+}
+
+// A photo the homeowner added while booking this job.
+export async function getJobPhoto(tenantId: string, jobId: string, photoId: string) {
+  const photo = await queries.findJobPhoto(tenantId, jobId, photoId)
+  if (!photo) throw new HttpError(404, 'not_found', 'That photo isn’t on this job.')
+  return photo
 }
 
 // Assigns, reassigns or unassigns a technician and/or moves the job to another day or window.

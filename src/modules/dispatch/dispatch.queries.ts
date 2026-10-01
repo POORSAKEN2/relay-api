@@ -3,6 +3,8 @@ import { alias, type PgColumn } from 'drizzle-orm/pg-core'
 import { type Db, db, type Tx } from '../../db/client.ts'
 import {
   arrivalWindows,
+  bookingDrafts,
+  bookingPhotos,
   customers,
   jobNotes,
   jobs,
@@ -220,4 +222,35 @@ export async function insertNote(
     .values({ ...values, tenantId })
     .returning({ id: jobNotes.id, body: jobNotes.body, createdAt: jobNotes.createdAt })
   return note
+}
+
+// A booking photo and the draft it was added to.
+const photoDraft = and(
+  eq(bookingDrafts.tenantId, bookingPhotos.tenantId),
+  eq(bookingDrafts.id, bookingPhotos.draftId),
+)
+
+// Photos the homeowner added while booking this job online (step 4), oldest first.
+export function listJobPhotos(tenantId: string, jobId: string) {
+  return db
+    .select({ id: bookingPhotos.id })
+    .from(bookingPhotos)
+    .innerJoin(bookingDrafts, photoDraft)
+    .where(and(eq(bookingPhotos.tenantId, tenantId), eq(bookingDrafts.bookedJobId, jobId)))
+    .orderBy(asc(bookingPhotos.createdAt))
+}
+
+export async function findJobPhoto(tenantId: string, jobId: string, photoId: string) {
+  const [photo] = await db
+    .select({ contentType: bookingPhotos.contentType, data: bookingPhotos.data })
+    .from(bookingPhotos)
+    .innerJoin(bookingDrafts, photoDraft)
+    .where(
+      and(
+        eq(bookingPhotos.tenantId, tenantId),
+        eq(bookingDrafts.bookedJobId, jobId),
+        eq(bookingPhotos.id, photoId),
+      ),
+    )
+  return photo
 }
