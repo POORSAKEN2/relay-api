@@ -7,7 +7,7 @@ import {
   readSessionToken,
   setSessionCookie,
 } from '../../middleware/auth.ts'
-import { PhoneCodeInput, SignInInput } from './accounts.schemas.ts'
+import { PhoneCodeInput, PhoneSignInInput, SignInInput } from './accounts.schemas.ts'
 import * as accounts from './accounts.service.ts'
 
 export const accountsRoutes = Router()
@@ -35,6 +35,13 @@ accountsRoutes.post('/auth/phone/code', signInLimit, async (req, res) => {
   const { phone } = PhoneCodeInput.parse(req.body)
   await accounts.requestSignInCode(phone)
   res.status(204).end()
+})
+
+accountsRoutes.post('/auth/phone/sign-in', signInLimit, async (req, res) => {
+  const { phone, code } = PhoneSignInInput.parse(req.body)
+  const session = await accounts.signInWithCode(phone, code)
+  setSessionCookie(res, session.token, session.expiresAt)
+  res.json({ user: session.user })
 })
 
 accountsRoutes.post('/auth/sign-out', async (req, res) => {

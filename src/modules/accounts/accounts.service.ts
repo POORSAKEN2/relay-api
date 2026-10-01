@@ -1,4 +1,11 @@
-import { createHash, createHmac, randomBytes, randomInt, randomUUID } from 'node:crypto'
+import {
+  createHash,
+  createHmac,
+  randomBytes,
+  randomInt,
+  randomUUID,
+  timingSafeEqual,
+} from 'node:crypto'
 import { env } from '../../config/env.ts'
 import type { User, UserRole } from '../../db/schema.ts'
 import { HttpError } from '../../lib/http-error.ts'
@@ -12,6 +19,7 @@ const SESSION_DAYS = 30
 const RENEW_WHEN_DAYS_LEFT = 15
 const CODE_MINUTES = 10
 const CODES_PER_HOUR = 5
+const CODE_TRIES = 5
 
 export type SessionUser = {
   id: string
@@ -28,6 +36,10 @@ export async function signIn(email: string, password: string) {
   if (!user?.passwordHash || !passwordOk) {
     throw new HttpError(401, 'unauthorized', 'Wrong email or password')
   }
+  return startSession(user)
+}
+
+async function startSession(user: User) {
   const token = randomBytes(32).toString('base64url')
   const expiresAt = new Date(Date.now() + SESSION_DAYS * DAY_MS)
   await queries.insertSession({ id: hashToken(token), userId: user.id, expiresAt })
@@ -63,6 +75,30 @@ export async function requestSignInCode(phone: string) {
 // isn't enough to work out a live code.
 export function hashCode(code: string): string {
   return createHmac('sha256', env.SIGN_IN_CODE_SECRET).update(code).digest('hex')
+}
+
+// Signs a technician in with the code texted to them. Every guess uses up one of the code's
+// 5 tries. An unknown number, a wrong code and a used or expired one all get the same answer.
+export async function signInWithCode(phone: string, typedCode: string) {
+  const found = await queries.findTechnicianByPhone(phone)
+  if (!found) throw wrongCode()
+  const code = await queries.findNewestCode(found.user.id)
+  if (!code) throw wrongCode()
+
+  const now = new Date()
+  if (!(await queries.spendCodeTry(code.id, CODE_TRIES, now))) throw wrongCode()
+  if (!sameHash(hashCode(typedCode), code.codeHash)) throw wrongCode()
+  if (!(await queries.markCodeUsed(code.id, now))) throw wrongCode()
+  return startSession(found.user)
+}
+
+function wrongCode() {
+  return new HttpError(401, 'unauthorized', 'That code is wrong or has expired. Ask for a new one.')
+}
+
+// Compares two hex hashes in constant time, so response timing gives nothing away.
+function sameHash(a: string, b: string): boolean {
+  return timingSafeEqual(Buffer.from(a, 'hex'), Buffer.from(b, 'hex'))
 }
 
 // The session's user, or null if the token is unknown or expired.

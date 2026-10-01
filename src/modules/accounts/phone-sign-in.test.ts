@@ -5,7 +5,7 @@ import { createTechnician, createTenant, createUser, resetDb } from '../../../te
 import { createApp } from '../../app.ts'
 import { db } from '../../db/client.ts'
 import { messages, signInCodes, users } from '../../db/schema.ts'
-import { hashCode, requestSignInCode } from './accounts.service.ts'
+import { hashCode, requestSignInCode, signInWithCode } from './accounts.service.ts'
 
 // Own file: the sign-in limiter allows 10 requests per 15 minutes and counts every request
 // this file makes to /api/auth/phone/*, so most cases call the service directly.
@@ -102,5 +102,105 @@ describe('requestSignInCode', () => {
 
     expect(await db.select().from(signInCodes)).toHaveLength(5)
     expect(await db.select().from(messages)).toHaveLength(5)
+  })
+})
+
+const WRONG_CODE = { status: 401, message: 'That code is wrong or has expired. Ask for a new one.' }
+
+describe('POST /api/auth/phone/sign-in', () => {
+  it('signs the technician in with the texted code', async () => {
+    const tenant = await createTenant('desert')
+    const tech = await createTechnician(tenant.id, 'Sam')
+    await giveCode(tech.id, '123456')
+
+    const res = await request(app)
+      .post('/api/auth/phone/sign-in')
+      .send({ phone: typed(tech.phone!), code: '123456' })
+      .expect(200)
+
+    expect(res.body.user).toMatchObject({
+      id: tech.id,
+      role: 'technician',
+      tenantId: tenant.id,
+      email: null,
+    })
+    const [cookie] = res.get('Set-Cookie') ?? []
+    expect(cookie).toMatch(/^relay_session=[\w-]+;/)
+    const me = await request(app).get('/api/auth/me').set('Cookie', cookie.split(';')[0])
+    expect(me.body.user.id).toBe(tech.id)
+    const [code] = await db.select().from(signInCodes)
+    expect(code.usedAt).toBeInstanceOf(Date)
+  })
+
+  it('gives the same answer for a wrong code and an unknown number', async () => {
+    const tenant = await createTenant('desert')
+    const tech = await createTechnician(tenant.id, 'Sam')
+    await giveCode(tech.id, '123456')
+
+    const wrongCode = await request(app)
+      .post('/api/auth/phone/sign-in')
+      .send({ phone: tech.phone, code: '654321' })
+      .expect(401)
+    const unknownNumber = await request(app)
+      .post('/api/auth/phone/sign-in')
+      .send({ phone: '+14805550000', code: '123456' })
+      .expect(401)
+
+    expect(wrongCode.body).toEqual(unknownNumber.body)
+    expect(wrongCode.body.error).toMatchObject({
+      code: 'unauthorized',
+      message: WRONG_CODE.message,
+    })
+  })
+})
+
+describe('signInWithCode', () => {
+  it('accepts a code only once', async () => {
+    const tenant = await createTenant('desert')
+    const tech = await createTechnician(tenant.id, 'Sam')
+    await giveCode(tech.id, '123456')
+
+    await signInWithCode(tech.phone!, '123456')
+    await expect(signInWithCode(tech.phone!, '123456')).rejects.toMatchObject(WRONG_CODE)
+  })
+
+  it('refuses an expired code', async () => {
+    const tenant = await createTenant('desert')
+    const tech = await createTechnician(tenant.id, 'Sam')
+    await giveCode(tech.id, '123456', { expiresAt: new Date(Date.now() - 1000) })
+
+    await expect(signInWithCode(tech.phone!, '123456')).rejects.toMatchObject(WRONG_CODE)
+  })
+
+  it('only accepts the newest code', async () => {
+    const tenant = await createTenant('desert')
+    const tech = await createTechnician(tenant.id, 'Sam')
+    await giveCode(tech.id, '111111', { createdAt: new Date(Date.now() - MINUTE_MS) })
+    await giveCode(tech.id, '222222')
+
+    await expect(signInWithCode(tech.phone!, '111111')).rejects.toMatchObject(WRONG_CODE)
+    await expect(signInWithCode(tech.phone!, '222222')).resolves.toMatchObject({
+      user: { id: tech.id },
+    })
+  })
+
+  it('stops accepting a code after 5 wrong tries', async () => {
+    const tenant = await createTenant('desert')
+    const tech = await createTechnician(tenant.id, 'Sam')
+    await giveCode(tech.id, '123456')
+
+    for (let i = 0; i < 5; i++) {
+      await expect(signInWithCode(tech.phone!, '000000')).rejects.toMatchObject(WRONG_CODE)
+    }
+    await expect(signInWithCode(tech.phone!, '123456')).rejects.toMatchObject(WRONG_CODE)
+  })
+
+  it('refuses a technician taken off the team', async () => {
+    const tenant = await createTenant('desert')
+    const tech = await createTechnician(tenant.id, 'Sam')
+    await giveCode(tech.id, '123456')
+    await db.update(users).set({ disabledAt: new Date() }).where(eq(users.id, tech.id))
+
+    await expect(signInWithCode(tech.phone!, '123456')).rejects.toMatchObject(WRONG_CODE)
   })
 })

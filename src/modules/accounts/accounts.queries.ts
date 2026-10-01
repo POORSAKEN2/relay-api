@@ -1,4 +1,4 @@
-import { and, count, eq, isNull, lt } from 'drizzle-orm'
+import { and, count, desc, eq, gt, isNull, lt, sql } from 'drizzle-orm'
 import { db } from '../../db/client.ts'
 import { sessions, signInCodes, tenants, type User, users } from '../../db/schema.ts'
 
@@ -67,4 +67,43 @@ export async function countCodes(userId: string): Promise<number> {
 
 export async function insertCode(values: { userId: string; codeHash: string; expiresAt: Date }) {
   await db.insert(signInCodes).values(values)
+}
+
+// The technician's newest code. Only the last one texted can be used.
+export async function findNewestCode(userId: string) {
+  const [code] = await db
+    .select()
+    .from(signInCodes)
+    .where(eq(signInCodes.userId, userId))
+    .orderBy(desc(signInCodes.createdAt))
+    .limit(1)
+  return code
+}
+
+// Uses up one try on a code that is unused, unexpired and has tries left; false if it has
+// none. One UPDATE, so guesses sent at the same moment can't share a try.
+export async function spendCodeTry(id: string, maxTries: number, now: Date): Promise<boolean> {
+  const spent = await db
+    .update(signInCodes)
+    .set({ attempts: sql`${signInCodes.attempts} + 1` })
+    .where(
+      and(
+        eq(signInCodes.id, id),
+        isNull(signInCodes.usedAt),
+        gt(signInCodes.expiresAt, now),
+        lt(signInCodes.attempts, maxTries),
+      ),
+    )
+    .returning({ id: signInCodes.id })
+  return spent.length > 0
+}
+
+// Marks the code used; false if another request used it first.
+export async function markCodeUsed(id: string, now: Date): Promise<boolean> {
+  const used = await db
+    .update(signInCodes)
+    .set({ usedAt: now })
+    .where(and(eq(signInCodes.id, id), isNull(signInCodes.usedAt)))
+    .returning({ id: signInCodes.id })
+  return used.length > 0
 }

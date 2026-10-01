@@ -8,3 +8,11 @@ export const SignInInput = z.object({
 
 // Technicians type their mobile number in any US format.
 export const PhoneCodeInput = z.object({ phone: UsPhone })
+
+export const PhoneSignInInput = z.object({
+  phone: UsPhone,
+  code: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/, 'Enter the 6-digit code'),
+})
