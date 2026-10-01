@@ -98,6 +98,7 @@ describe('GET /api/dispatch/board', () => {
         technicianId: shop.mike.id,
         windowId: shop.tueMorning.id,
         windowLabel: '8 AM–12 PM',
+        etaLabel: null,
         customerName: 'Maria Lopez',
         city: 'Phoenix',
         serviceName: 'AC repair',
@@ -388,5 +389,58 @@ describe('POST /api/jobs/:jobId/notes', () => {
       .send({ body: '   ' })
       .expect(400)
     expect(res.body.error.details).toEqual({ body: ['Write a note first'] })
+  })
+})
+
+describe('arrival times', () => {
+  // 9:10 AM in Phoenix on TUESDAY.
+  const nineTen = new Date(`${TUESDAY}T16:10:00Z`)
+
+  it('shows the arrival time on the board and in the drawer until the visit starts', async () => {
+    const shop = await createShop('desert')
+    const mine = { technicianId: shop.mike.id, etaAt: nineTen }
+    const enRoute = await createJob(shop, { ...mine, status: 'en_route' })
+    const late = await createJob(shop, mine) // booked, after "Running late"
+    const started = await createJob(shop, { ...mine, status: 'in_progress' })
+    const noTime = await createJob(shop)
+
+    const board = await request(app)
+      .get(`/api/dispatch/board?date=${TUESDAY}`)
+      .set('Cookie', shop.cookie)
+      .expect(200)
+    const etaOf = (id: string) =>
+      board.body.jobs.find((job: { id: string }) => job.id === id).etaLabel
+    expect(etaOf(enRoute.id)).toBe('9:10 AM')
+    expect(etaOf(late.id)).toBe('9:10 AM')
+    expect(etaOf(started.id)).toBeNull()
+    expect(etaOf(noTime.id)).toBeNull()
+
+    const drawer = await request(app)
+      .get(`/api/jobs/${enRoute.id}`)
+      .set('Cookie', shop.cookie)
+      .expect(200)
+    expect(drawer.body.job.etaLabel).toBe('9:10 AM')
+    expect(drawer.body.job.completedLabel).toBeNull()
+  })
+
+  it('forgets the arrival time when the office changes the status or moves the job', async () => {
+    const shop = await createShop('desert')
+    const statusChanged = await createJob(shop, { technicianId: shop.mike.id, etaAt: nineTen })
+    const moved = await createJob(shop, { technicianId: shop.mike.id, etaAt: nineTen })
+
+    await request(app)
+      .post(`/api/jobs/${statusChanged.id}/status`)
+      .set('Cookie', shop.cookie)
+      .send({ status: 'en_route' })
+      .expect(200)
+    await request(app)
+      .put(`/api/jobs/${moved.id}/slot`)
+      .set('Cookie', shop.cookie)
+      .send({ date: TUESDAY, windowId: shop.tueAfternoon.id, technicianId: shop.mike.id })
+      .expect(200)
+
+    const saved = await db.select({ id: jobs.id, etaAt: jobs.etaAt }).from(jobs)
+    expect(saved.find((job) => job.id === statusChanged.id)?.etaAt).toBeNull()
+    expect(saved.find((job) => job.id === moved.id)?.etaAt).toBeNull()
   })
 })

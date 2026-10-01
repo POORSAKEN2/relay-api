@@ -27,6 +27,11 @@ export function local(column: PgColumn, format: string): SQL<string> {
   return sql<string>`to_char(${column} at time zone ${tenants.timezone}, ${format})`
 }
 
+// Like local(), for a column that may be empty: null stays null.
+export function localOrNull(column: PgColumn, format: string): SQL<string | null> {
+  return sql<string | null>`to_char(${column} at time zone ${tenants.timezone}, ${format})`
+}
+
 // The arrival window a job sits in: same weekday and same local start time. A job whose
 // window was changed or removed since booking matches none.
 const matchingWindow = and(
@@ -93,6 +98,7 @@ export function listJobsOn(tenantId: string, date: string) {
       windowId: arrivalWindows.id,
       localStart: local(jobs.windowStartsAt, 'HH24:MI:SS'),
       localEnd: local(jobs.windowEndsAt, 'HH24:MI:SS'),
+      etaLocal: localOrNull(jobs.etaAt, 'HH24:MI:SS'), // set by "On my way" / "Running late"
       customerName: customers.name,
       city: properties.city,
       serviceName: services.name,
@@ -128,6 +134,8 @@ export async function findJobDetail(tenantId: string, jobId: string) {
       date: local(jobs.windowStartsAt, 'YYYY-MM-DD'),
       localStart: local(jobs.windowStartsAt, 'HH24:MI:SS'),
       localEnd: local(jobs.windowEndsAt, 'HH24:MI:SS'),
+      etaLocal: localOrNull(jobs.etaAt, 'HH24:MI:SS'),
+      completedLocal: localOrNull(jobs.completedAt, 'HH24:MI:SS'),
       windowId: arrivalWindows.id,
       technicianId: technicians.id,
       technicianName: technicians.name,
@@ -218,8 +226,9 @@ export async function updateJob(
 export async function insertNote(
   tenantId: string,
   values: { jobId: string; authorId: string; body: string },
+  tx: Db = db,
 ) {
-  const [note] = await db
+  const [note] = await tx
     .insert(jobNotes)
     .values({ ...values, tenantId })
     .returning({ id: jobNotes.id, body: jobNotes.body, createdAt: jobNotes.createdAt })
