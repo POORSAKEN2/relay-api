@@ -4,6 +4,7 @@ import { parseEnv } from './env.ts'
 const required = {
   DATABASE_URL: 'postgres://relay:relay@localhost:5432/relay',
   APP_DOMAIN: 'localhost',
+  SIGN_IN_CODE_SECRET: 'a-secret-that-is-at-least-32-chars-long',
 }
 
 it('fills in defaults', () => {
@@ -23,4 +24,10 @@ it('names every invalid variable', () => {
   expect(() => parseEnv({ PORT: 'abc' })).toThrow(/DATABASE_URL/)
   expect(() => parseEnv({ PORT: 'abc' })).toThrow(/APP_DOMAIN/)
   expect(() => parseEnv({ PORT: 'abc' })).toThrow(/PORT/)
+})
+
+it('refuses a sign-in code secret shorter than 32 characters', () => {
+  expect(() => parseEnv({ ...required, SIGN_IN_CODE_SECRET: 'short' })).toThrow(
+    /SIGN_IN_CODE_SECRET/,
+  )
 })

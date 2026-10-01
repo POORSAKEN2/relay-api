@@ -1,9 +1,10 @@
+import { eq } from 'drizzle-orm'
 import request from 'supertest'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createTenant, createUser, PASSWORD, resetDb, signIn } from '../../../test/helpers.ts'
 import { createApp } from '../../app.ts'
 import { db } from '../../db/client.ts'
-import { sessions } from '../../db/schema.ts'
+import { sessions, users } from '../../db/schema.ts'
 import { cleanupExpiredSessions } from './accounts.service.ts'
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -100,6 +101,16 @@ describe('sessions', () => {
     const owner = await createUser('owner', tenant.id)
     const cookie = await signIn(owner.email)
     await db.update(sessions).set({ expiresAt: new Date(Date.now() - 1000) })
+
+    const res = await request(app).get('/api/auth/me').set('Cookie', cookie).expect(200)
+    expect(res.body).toEqual({ user: null })
+  })
+
+  it('treats the session of a deactivated user as signed out', async () => {
+    const tenant = await createTenant('desert')
+    const owner = await createUser('owner', tenant.id)
+    const cookie = await signIn(owner.email)
+    await db.update(users).set({ disabledAt: new Date() }).where(eq(users.id, owner.id))
 
     const res = await request(app).get('/api/auth/me').set('Cookie', cookie).expect(200)
     expect(res.body).toEqual({ user: null })

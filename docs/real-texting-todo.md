@@ -35,6 +35,19 @@ temporary `sendText()` in `src/modules/messaging/sms.ts`. It only saves a `queue
 - [ ] Once texts really go out, tell the homeowner in the wizard's Exit dialog: "We'll text
       you a link to finish." It was left out on purpose so the page never promises a text
       that isn't sent.
+- [ ] Technician sign-in codes (`sign_in_code`) and other staff texts go to the contractor's
+      own people, not homeowners: the consent check and quiet hours must not block them. Send
+      `text.body` to Twilio, but keep storing the placeholder body for `sign_in_code`: the code
+      itself must never be saved.
+- [ ] Pick the number sign-in codes come from (the contractor's own, or one Relay number for
+      everyone) and register a 10DLC campaign that covers one-time passcodes.
+- [ ] Decide whether the development-only log of every text in `sendText()` stays. It is how
+      developers without Twilio keys read sign-in codes.
+- [ ] Make the 5-codes-per-hour cap atomic (delete, count and insert in one transaction that
+      locks the technician's row), since the address limiter doesn't stop a burst from many
+      addresses.
+- [ ] Consider a daily cap on sign-in texts per phone, with an alert, since someone who knows
+      a technician's number can use up their codes and tries.
 
 ## Should have
 
