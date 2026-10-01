@@ -1,4 +1,5 @@
 import express, { Router } from 'express'
+import { sendPhoto } from '../../lib/send-photo.ts'
 import { requireRole } from '../../middleware/auth.ts'
 import { tenantOf } from '../booking/booking.service.ts'
 import { TechnicianInput, TechnicianParams } from './team.schemas.ts'
@@ -32,17 +33,10 @@ teamRoutes.put('/technicians/:technicianId/photo', staff, photoBody, async (req,
   res.json({ technician: await team.setPhoto(req.user!, technicianId, req.body) })
 })
 
-// Staff only, like the list. `nosniff` keeps browsers to the type we checked on upload.
+// Staff only, like the list.
 teamRoutes.get('/technicians/:technicianId/photo', staff, async (req, res) => {
   const { technicianId } = TechnicianParams.parse(req.params)
-  const photo = await team.getPhoto(tenantOf(req.user!), technicianId)
-  res
-    .set({
-      'Content-Type': photo.contentType,
-      'X-Content-Type-Options': 'nosniff',
-      'Cache-Control': 'private, max-age=31536000, immutable',
-    })
-    .send(photo.data)
+  sendPhoto(res, await team.getPhoto(tenantOf(req.user!), technicianId))
 })
 
 teamRoutes.delete('/technicians/:technicianId/photo', staff, async (req, res) => {

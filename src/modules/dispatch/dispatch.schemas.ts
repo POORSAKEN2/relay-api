@@ -5,6 +5,10 @@ export const BoardQuery = z.object({ date: LocalDate })
 
 export const JobParams = z.object({ jobId: z.uuid('This job link isn’t valid') })
 
+export const JobPhotoParams = JobParams.extend({
+  photoId: z.uuid('That photo link isn’t valid'),
+})
+
 // Where a job goes on the board: a day, a window, and a technician (null = unassigned).
 export const SlotInput = z.object({
   date: LocalDate,

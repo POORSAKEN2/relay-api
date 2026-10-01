@@ -1,7 +1,8 @@
-import { and, asc, eq, gt, isNull, lt, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray, isNull, lt, sql } from 'drizzle-orm'
 import { type Db, db } from '../../db/client.ts'
 import {
   bookingDrafts,
+  bookingPhotos,
   callbackRequests,
   customers,
   jobs,
@@ -10,8 +11,9 @@ import {
   waitlistEntries,
 } from '../../db/schema.ts'
 
-// Tenant-scoped: every query takes tenantId first, except the two system jobs' queries
-// (expireHolds and listDraftsToRecover), which work across contractors.
+// Tenant-scoped: every query takes tenantId first, except the system jobs' queries
+// (expireHolds, listDraftsToRecover, deleteIdleDraftPhotos) and findDraftPhoto, which work
+// across contractors.
 
 // Active services in the order the contractor set, with what the booking page shows.
 export function listServices(tenantId: string) {
@@ -95,6 +97,23 @@ export async function findOpenDraft(tenantId: string, token: string, tx: Db = db
   return draft
 }
 
+// Like findOpenDraft, and locks the draft until the transaction ends, so two uploads at once
+// can't both take the last photo place.
+export async function lockOpenDraft(tenantId: string, token: string, tx: Db) {
+  const [draft] = await tx
+    .select()
+    .from(bookingDrafts)
+    .where(
+      and(
+        eq(bookingDrafts.tenantId, tenantId),
+        eq(bookingDrafts.token, token),
+        isNull(bookingDrafts.bookedJobId),
+      ),
+    )
+    .for('update')
+  return draft
+}
+
 // Something the homeowner changed. It counts as activity, which restarts the recovery wait.
 export async function updateDraft(
   tenantId: string,
@@ -115,6 +134,62 @@ export async function markDraftBooked(tenantId: string, draftId: string, jobId: 
     .update(bookingDrafts)
     .set({ bookedJobId: jobId })
     .where(and(eq(bookingDrafts.tenantId, tenantId), eq(bookingDrafts.id, draftId)))
+}
+
+// The draft's photos, oldest first.
+export function listDraftPhotos(tenantId: string, draftId: string, tx: Db = db) {
+  return tx
+    .select({ id: bookingPhotos.id })
+    .from(bookingPhotos)
+    .where(and(eq(bookingPhotos.tenantId, tenantId), eq(bookingPhotos.draftId, draftId)))
+    .orderBy(asc(bookingPhotos.createdAt))
+}
+
+export async function insertDraftPhoto(
+  tenantId: string,
+  values: Pick<typeof bookingPhotos.$inferInsert, 'draftId' | 'contentType' | 'data'>,
+  tx: Db,
+) {
+  const [photo] = await tx
+    .insert(bookingPhotos)
+    .values({ ...values, tenantId })
+    .returning({ id: bookingPhotos.id })
+  return photo
+}
+
+export async function deleteDraftPhoto(tenantId: string, draftId: string, photoId: string) {
+  await db
+    .delete(bookingPhotos)
+    .where(
+      and(
+        eq(bookingPhotos.tenantId, tenantId),
+        eq(bookingPhotos.draftId, draftId),
+        eq(bookingPhotos.id, photoId),
+      ),
+    )
+}
+
+// A photo's image, found by its draft's token alone (tokens are unique across Relay). Only
+// while the draft is open.
+export async function findDraftPhoto(token: string, photoId: string) {
+  const [photo] = await db
+    .select({ contentType: bookingPhotos.contentType, data: bookingPhotos.data })
+    .from(bookingPhotos)
+    .innerJoin(
+      bookingDrafts,
+      and(
+        eq(bookingDrafts.tenantId, bookingPhotos.tenantId),
+        eq(bookingDrafts.id, bookingPhotos.draftId),
+      ),
+    )
+    .where(
+      and(
+        eq(bookingDrafts.token, token),
+        isNull(bookingDrafts.bookedJobId),
+        eq(bookingPhotos.id, photoId),
+      ),
+    )
+  return photo
 }
 
 // Every contractor's drafts that are due their one recovery text: consent given, nothing from
@@ -168,4 +243,18 @@ export async function expireHolds() {
     .where(and(eq(jobs.status, 'held'), lt(jobs.holdExpiresAt, new Date())))
     .returning({ id: jobs.id })
   return expired.length
+}
+
+// Every contractor's photos on drafts that were never booked and quiet since `idleSince`.
+// Returns how many were deleted.
+export async function deleteIdleDraftPhotos(idleSince: Date) {
+  const idleDrafts = db
+    .select({ id: bookingDrafts.id })
+    .from(bookingDrafts)
+    .where(and(isNull(bookingDrafts.bookedJobId), lt(bookingDrafts.lastActivityAt, idleSince)))
+  const deleted = await db
+    .delete(bookingPhotos)
+    .where(inArray(bookingPhotos.draftId, idleDrafts))
+    .returning({ id: bookingPhotos.id })
+  return deleted.length
 }

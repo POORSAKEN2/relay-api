@@ -31,6 +31,12 @@ export async function startJobs() {
     const texted = await onlineBooking.sendRecoveryTexts()
     if (texted > 0) logger.info({ texted }, 'Booking recovery texts saved')
   })
+
+  // Daily: photos on bookings nobody finished go 30 days after the homeowner's last activity.
+  await register('booking-photo-cleanup', { cron: '30 3 * * *' }, async () => {
+    const deleted = await onlineBooking.deleteIdlePhotos()
+    if (deleted > 0) logger.info({ deleted }, 'Idle booking photos deleted')
+  })
 }
 
 export async function stopJobs() {

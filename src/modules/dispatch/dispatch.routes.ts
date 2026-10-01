@@ -1,7 +1,15 @@
 import { Router } from 'express'
+import { sendPhoto } from '../../lib/send-photo.ts'
 import { requireRole } from '../../middleware/auth.ts'
 import { tenantOf } from '../booking/booking.service.ts'
-import { BoardQuery, JobParams, NoteInput, SlotInput, StatusInput } from './dispatch.schemas.ts'
+import {
+  BoardQuery,
+  JobParams,
+  JobPhotoParams,
+  NoteInput,
+  SlotInput,
+  StatusInput,
+} from './dispatch.schemas.ts'
 import * as dispatch from './dispatch.service.ts'
 
 export const dispatchRoutes = Router()
@@ -16,6 +24,11 @@ dispatchRoutes.get('/dispatch/board', staff, async (req, res) => {
 dispatchRoutes.get('/jobs/:jobId', staff, async (req, res) => {
   const { jobId } = JobParams.parse(req.params)
   res.json(await dispatch.getJob(tenantOf(req.user!), jobId))
+})
+
+dispatchRoutes.get('/jobs/:jobId/photos/:photoId', staff, async (req, res) => {
+  const { jobId, photoId } = JobPhotoParams.parse(req.params)
+  sendPhoto(res, await dispatch.getJobPhoto(tenantOf(req.user!), jobId, photoId))
 })
 
 dispatchRoutes.put('/jobs/:jobId/slot', staff, async (req, res) => {
