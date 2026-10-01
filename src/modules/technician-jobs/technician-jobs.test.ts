@@ -95,7 +95,9 @@ describe('GET /api/my-jobs', () => {
       id: priority.id,
       status: 'booked',
       priority: true,
+      dateLabel: formatDay(today),
       windowLabel: '8 AM–12 PM',
+      etaLabel: null,
       customerName: 'Maria Lopez',
       street: '12 Palm St',
       city: 'Phoenix',
@@ -109,7 +111,53 @@ describe('GET /api/my-jobs', () => {
       .get('/api/my-jobs')
       .set('Cookie', await signInTechnician(shop.mike))
       .expect(200)
-    expect(res.body).toEqual({ days: [] })
+    expect(res.body).toEqual({ earlier: [], days: [] })
+  })
+
+  it('puts unfinished jobs from before today in an Earlier section', async () => {
+    const shop = await createShop('desert')
+    const mine = { technicianId: shop.mike.id }
+    const yesterday = phoenixDay(-1)
+    const started = await createJob(shop, {
+      ...mine,
+      at: `${phoenixDay(-2)} 08:00`,
+      status: 'in_progress',
+    })
+    const booked = await createJob(shop, { ...mine, at: `${yesterday} 08:00` })
+    // Not in Earlier: the office reschedules no-access jobs; done is done; Ana's isn't his.
+    await createJob(shop, { ...mine, at: `${yesterday} 12:00`, status: 'no_access' })
+    await createJob(shop, { ...mine, at: `${yesterday} 12:00`, status: 'done' })
+    await createJob(shop, { technicianId: shop.ana.id, at: `${yesterday} 08:00` })
+
+    const res = await request(app)
+      .get('/api/my-jobs')
+      .set('Cookie', await signInTechnician(shop.mike))
+      .expect(200)
+
+    expect(res.body.earlier.map((job: { id: string }) => job.id)).toEqual([started.id, booked.id])
+    expect(res.body.earlier[1]).toMatchObject({
+      dateLabel: formatDay(yesterday),
+      windowLabel: '8 AM–12 PM',
+    })
+    expect(res.body.days).toEqual([])
+  })
+
+  it('shows the arrival time on cards of visits that have not started', async () => {
+    const shop = await createShop('desert')
+    const today = phoenixDay(0)
+    await createJob(shop, {
+      technicianId: shop.mike.id,
+      at: `${today} 08:00`,
+      status: 'en_route',
+      etaAt: new Date(`${today}T16:10:00Z`), // 9:10 AM in Phoenix
+    })
+
+    const res = await request(app)
+      .get('/api/my-jobs')
+      .set('Cookie', await signInTechnician(shop.mike))
+      .expect(200)
+
+    expect(res.body.days[0].jobs[0].etaLabel).toBe('9:10 AM')
   })
 
   it('is for technicians only', async () => {

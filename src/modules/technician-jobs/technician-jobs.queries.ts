@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
 import { type Db, db } from '../../db/client.ts'
 import { customers, jobs, properties, services, tenants, users } from '../../db/schema.ts'
-import { local } from '../dispatch/dispatch.queries.ts'
+import { local, localOrNull } from '../dispatch/dispatch.queries.ts'
 
 // Tenant-scoped: every query takes tenantId first. The job page reuses the dispatch module's
 // queries; only the list needs its own.
@@ -10,10 +10,11 @@ import { local } from '../dispatch/dispatch.queries.ts'
 // 'cancelled' never show.
 export const VISIBLE_STATUSES = ['booked', 'en_route', 'in_progress', 'no_access', 'done'] as const
 
-// A technician's jobs from the start of the contractor's local today, for `days` days, in the
-// order the list shows them: by day, done last, then by window, PRIORITY first, oldest first.
-export function listTechnicianJobs(tenantId: string, technicianId: string, days: number) {
-  const today = sql`(now() at time zone ${tenants.timezone})::date`
+// The contractor's local today, in SQL. Needs `tenants` joined.
+const today = sql`(now() at time zone ${tenants.timezone})::date`
+
+// A job card's columns, joined and ready for a where clause.
+function selectCards() {
   return db
     .select({
       id: jobs.id,
@@ -22,6 +23,7 @@ export function listTechnicianJobs(tenantId: string, technicianId: string, days:
       date: local(jobs.windowStartsAt, 'YYYY-MM-DD'),
       localStart: local(jobs.windowStartsAt, 'HH24:MI:SS'),
       localEnd: local(jobs.windowEndsAt, 'HH24:MI:SS'),
+      etaLocal: localOrNull(jobs.etaAt, 'HH24:MI:SS'),
       customerName: customers.name,
       street: properties.street,
       city: properties.city,
@@ -32,6 +34,12 @@ export function listTechnicianJobs(tenantId: string, technicianId: string, days:
     .innerJoin(customers, eq(customers.id, jobs.customerId))
     .innerJoin(properties, eq(properties.id, jobs.propertyId))
     .innerJoin(services, eq(services.id, jobs.serviceId))
+}
+
+// A technician's jobs from the start of the contractor's local today, for `days` days, in the
+// order the list shows them: by day, done last, then by window, PRIORITY first, oldest first.
+export function listTechnicianJobs(tenantId: string, technicianId: string, days: number) {
+  return selectCards()
     .where(
       and(
         eq(jobs.tenantId, tenantId),
@@ -48,6 +56,21 @@ export function listTechnicianJobs(tenantId: string, technicianId: string, days:
       desc(jobs.priority),
       asc(jobs.createdAt),
     )
+}
+
+// Unfinished visits from before today, oldest first, so a technician can finish yesterday's
+// job. No access jobs are left out: rescheduling them is the office's job.
+export function listEarlierTechnicianJobs(tenantId: string, technicianId: string) {
+  return selectCards()
+    .where(
+      and(
+        eq(jobs.tenantId, tenantId),
+        eq(jobs.technicianId, technicianId),
+        inArray(jobs.status, ['booked', 'en_route', 'in_progress']),
+        sql`${jobs.windowStartsAt} < ${today}::timestamp at time zone ${tenants.timezone}`,
+      ),
+    )
+    .orderBy(asc(jobs.windowStartsAt))
 }
 
 // Who to text about a job and how to sign it: the homeowner's phone, the contractor's name and

@@ -19,29 +19,35 @@ import { noAccessText, onMyWayText, runningLateText } from './texts.ts'
 const DAYS_SHOWN = 7 // today and the next 6 days
 const NOT_YOURS = 'This job isn’t assigned to you anymore.'
 
-// The technician's jobs, grouped by local day. Days without jobs are left out.
-export async function listMyJobs(user: SessionUser) {
-  const rows = await queries.listTechnicianJobs(tenantOf(user), user.id, DAYS_SHOWN)
-  const days: {
-    date: string
-    label: string
-    jobs: {
-      id: string
-      status: (typeof rows)[number]['status']
-      priority: boolean
-      windowLabel: string
-      customerName: string
-      street: string
-      city: string
-      serviceName: string
-    }[]
-  }[] = []
-  for (const { date, localStart, localEnd, ...job } of rows) {
-    // Rows come sorted by day, so a new date always starts a new group.
-    if (days.at(-1)?.date !== date) days.push({ date, label: formatDay(date), jobs: [] })
-    days.at(-1)!.jobs.push({ ...job, windowLabel: formatWindow(localStart, localEnd) })
+type CardRow = Awaited<ReturnType<typeof queries.listTechnicianJobs>>[number]
+
+// A job card as the list shows it.
+function toCard({ date, localStart, localEnd, etaLocal, ...job }: CardRow) {
+  return {
+    ...job,
+    dateLabel: formatDay(date),
+    windowLabel: formatWindow(localStart, localEnd),
+    etaLabel: arrivalLabel(job.status, etaLocal),
   }
-  return { days }
+}
+
+// Unfinished jobs from earlier days, then the technician's jobs grouped by local day. Days
+// without jobs are left out.
+export async function listMyJobs(user: SessionUser) {
+  const tenantId = tenantOf(user)
+  const [earlier, rows] = await Promise.all([
+    queries.listEarlierTechnicianJobs(tenantId, user.id),
+    queries.listTechnicianJobs(tenantId, user.id, DAYS_SHOWN),
+  ])
+  const days: { date: string; label: string; jobs: ReturnType<typeof toCard>[] }[] = []
+  for (const row of rows) {
+    // Rows come sorted by day, so a new date always starts a new group.
+    if (days.at(-1)?.date !== row.date) {
+      days.push({ date: row.date, label: formatDay(row.date), jobs: [] })
+    }
+    days.at(-1)!.jobs.push(toCard(row))
+  }
+  return { earlier: earlier.map(toCard), days }
 }
 
 function notYours() {
