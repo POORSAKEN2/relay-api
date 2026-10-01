@@ -270,13 +270,13 @@ describe('POST /api/online-booking/bookings', () => {
     expect(job).toMatchObject({ priority: true, priorityFeeCents: 0, vulnerableOccupant: true })
   })
 
-  it('reuses a customer with the same phone and their saved address', async () => {
+  it('reuses a customer with the same phone and name, and their saved address', async () => {
     const shop = await createServingShop()
 
     const res = await post(
       'bookings',
       bookingBody(shop, {
-        name: 'Maria L.',
+        name: 'maria  LOPEZ', // case and spacing don't matter
         phone: '602-555-0111',
         street: '12 palm st',
         city: 'Phoenix',
@@ -288,6 +288,23 @@ describe('POST /api/online-booking/bookings', () => {
     expect(job).toMatchObject({ customerId: shop.customer.id, propertyId: shop.property.id })
     expect(await db.select().from(customers)).toHaveLength(1)
     expect(await db.select().from(properties)).toHaveLength(1)
+  })
+
+  it('keeps someone else on a shared phone as their own customer', async () => {
+    const shop = await createServingShop()
+
+    const res = await post(
+      'bookings',
+      bookingBody(shop, { name: 'John Lopez', phone: '602-555-0111' }),
+    ).expect(201)
+
+    const [job] = await db.select().from(jobs).where(eq(jobs.id, res.body.jobId))
+    expect(job.customerId).not.toBe(shop.customer.id)
+    const [booker] = await db.select().from(customers).where(eq(customers.id, job.customerId))
+    expect(booker).toMatchObject({ name: 'John Lopez', phone: '+16025550111' })
+    // Maria keeps her name and her earlier jobs.
+    const [maria] = await db.select().from(customers).where(eq(customers.id, shop.customer.id))
+    expect(maria.name).toBe('Maria Lopez')
   })
 
   it('refuses a ZIP code outside the service area', async () => {

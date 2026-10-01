@@ -424,14 +424,16 @@ async function reserveOpenWindow(tx: Tx, tenantId: string, windowId: string, dat
   return slot
 }
 
-// A homeowner who booked or called before keeps one customer record, matched by phone.
+// A homeowner who booked or called before keeps one customer record, matched by phone and
+// name. Someone else on the same phone (a shared household number) gets their own record, so
+// each job shows who booked it.
 async function findOrAddCustomer(
   tenantId: string,
   input: { name: string; phone: string; email?: string },
   tx: Db,
 ) {
   return (
-    (await customers.findCustomerByPhone(tenantId, input.phone, tx)) ??
+    (await customers.findCustomerByPhoneAndName(tenantId, input.phone, input.name, tx)) ??
     (await customers.insertCustomer(
       tenantId,
       { name: input.name, phone: input.phone, email: input.email, source: 'booking' },

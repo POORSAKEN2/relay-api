@@ -12,12 +12,26 @@ export async function findCustomer(tenantId: string, customerId: string, tx: Db 
   return customer
 }
 
-// The customer with this phone number; the oldest one when several share it.
-export async function findCustomerByPhone(tenantId: string, phone: string, tx: Db = db) {
+// The customer with this phone number and name; the oldest one when several match. A household
+// can share a phone, so the name tells its people apart. Case and extra spaces in the name
+// don't count: 'maria  LOPEZ' is 'Maria Lopez'.
+export async function findCustomerByPhoneAndName(
+  tenantId: string,
+  phone: string,
+  name: string,
+  tx: Db = db,
+) {
+  const sameName = name.trim().replace(/\s+/g, ' ').toLowerCase()
   const [customer] = await tx
     .select()
     .from(customers)
-    .where(and(eq(customers.tenantId, tenantId), eq(customers.phone, phone)))
+    .where(
+      and(
+        eq(customers.tenantId, tenantId),
+        eq(customers.phone, phone),
+        sql`lower(regexp_replace(btrim(${customers.name}), '\\s+', ' ', 'g')) = ${sameName}`,
+      ),
+    )
     .orderBy(asc(customers.createdAt))
     .limit(1)
   return customer
