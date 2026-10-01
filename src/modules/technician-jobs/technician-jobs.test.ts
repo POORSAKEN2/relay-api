@@ -202,6 +202,8 @@ describe('GET /api/my-jobs/:jobId', () => {
       windowLabel: '8 AM–12 PM',
       etaLabel: null,
       completedLabel: null,
+      // The minutes sheet shows arrival times in it, like the homeowner's text.
+      timezone: 'America/Phoenix',
       service: { name: 'AC repair' },
       customer: { name: 'Maria Lopez', phone: '+16025550111' },
       property: {

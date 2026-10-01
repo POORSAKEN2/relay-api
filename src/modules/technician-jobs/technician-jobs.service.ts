@@ -69,9 +69,10 @@ async function findMyJob(user: SessionUser, jobId: string) {
 export async function getMyJob(user: SessionUser, jobId: string) {
   const job = await findMyJob(user, jobId)
   const tenantId = tenantOf(user)
-  const [notes, photos] = await Promise.all([
+  const [notes, photos, timezone] = await Promise.all([
     dispatchQueries.listNotes(tenantId, jobId),
     dispatchQueries.listJobPhotos(tenantId, jobId),
+    dispatchQueries.findTimezone(tenantId),
   ])
   return {
     job: {
@@ -85,6 +86,9 @@ export async function getMyJob(user: SessionUser, jobId: string) {
       windowLabel: formatWindow(job.localStart, job.localEnd),
       etaLabel: arrivalLabel(job.status, job.etaLocal),
       completedLabel: job.completedLocal ? formatTime(job.completedLocal) : null,
+      // The contractor's time zone: the minutes sheet shows arrival times in it, so they match
+      // the homeowner's text even when the phone is set to another zone.
+      timezone,
       service: { name: job.service.name },
       customer: { name: job.customer.name, phone: job.customer.phone },
       property: job.property,

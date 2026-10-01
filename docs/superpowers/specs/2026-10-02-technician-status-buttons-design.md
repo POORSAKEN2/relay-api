@@ -127,8 +127,9 @@ All `requireRole('technician')`. Each answers with the refreshed job page (`getM
 
 ### What the screens get
 
-- Technician job page (`GET /api/my-jobs/:jobId`): adds `etaLabel` (`'9:10 AM'` or null) and
-  `completedLabel` (`'11:42 AM'` or null).
+- Technician job page (`GET /api/my-jobs/:jobId`): adds `etaLabel` (`'9:10 AM'` or null),
+  `completedLabel` (`'11:42 AM'` or null) and `timezone` (the contractor's, e.g.
+  `'America/Phoenix'`).
 - Technician list (`GET /api/my-jobs`): adds `earlier: [card]` (same card shape as `days`),
   and every card gets `etaLabel`.
 - Board (`GET /api/dispatch/board`) job cards and the office drawer (`GET /api/jobs/:jobId`)
@@ -141,8 +142,10 @@ No migration: `jobs.eta_at` already exists.
 - `features/technician-jobs/`: hooks for the five actions (each puts the returned job page in
   the cache), the button area, the minutes sheet, the No access sheet and the Job complete
   confirm, using the existing `Dialog` and `Button`.
-- `arrivalPreview(now, minutes)` builds "15 min · 9:10 AM" for the sheet, in the phone's local
-  time.
+- `arrivalPreview(now, minutes, timezone)` builds "15 min · 9:10 AM" for the sheet, in the
+  contractor's time zone (the job page's `timezone`), so it always matches the homeowner's text.
+  (First written as "the phone's local time"; changed after the live check showed a phone in
+  another zone would preview times that disagree with the text.)
 - The list shows the Earlier section and `etaLabel`; the board card and the job drawer show
   `etaLabel`.
 
