@@ -129,6 +129,7 @@ The API tests run against `relay_test` and set up its tables themselves.
 | You see | Fix |
 |---|---|
 | `Invalid environment variables … at DATABASE_URL` when the API starts | `.env` is missing: run `cp .env.example .env` in `relay-api`. |
+| `Invalid environment variables … at SIGN_IN_CODE_SECRET` when the API starts | Your `.env` is older than technician sign-in: copy the `SIGN_IN_CODE_SECRET` line from `.env.example` into it. |
 | `password authentication failed for user "relay"` or `database "relay" does not exist` | Step 3 wasn't run on this computer, or PostgreSQL isn't on port 5432. |
 | `EADDRINUSE: address already in use :::3000` | Another copy of the API is already running. Stop it (Ctrl+C in its terminal). Keep port 3000: the web app's dev proxy expects it. |
 | Vite says port 5173 is in use and picks 5174 | Another web dev server is running. Stop it, or open `desert.localhost:5174` instead. |
@@ -188,4 +189,4 @@ Web Service settings:
 - Pre-deploy command: `npm run db:migrate`
 - Start command: `npm start`
 - Health check path: `/health`
-- Environment: `NODE_ENV=production`, `DATABASE_URL` (a direct connection, not a pooled one, because pg-boss needs it), `APP_DOMAIN=garified.com`, `SENTRY_DSN`
+- Environment: `NODE_ENV=production`, `DATABASE_URL` (a direct connection, not a pooled one, because pg-boss needs it), `APP_DOMAIN=garified.com`, `SIGN_IN_CODE_SECRET` (its own random value, made with the command in `.env.example`), `SENTRY_DSN`

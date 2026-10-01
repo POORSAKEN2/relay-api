@@ -5,6 +5,8 @@ const EnvSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   DATABASE_URL: z.url(),
   APP_DOMAIN: z.string().min(1),
+  // Keys the hash of technician sign-in codes. Any random string of 32 or more characters.
+  SIGN_IN_CODE_SECRET: z.string().min(32),
   SENTRY_DSN: z.url().optional(),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
 })
