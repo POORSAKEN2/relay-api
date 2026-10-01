@@ -6,6 +6,7 @@ import { emitToTenant } from '../../realtime/index.ts'
 import type { SessionUser } from '../accounts/accounts.service.ts'
 import * as audit from '../audit/audit.queries.ts'
 import { reserveWindow, tenantOf } from '../booking/booking.service.ts'
+import * as charges from '../charges/charges.service.ts'
 import * as queries from './dispatch.queries.ts'
 import type { SettableStatus, SlotInput } from './dispatch.schemas.ts'
 
@@ -60,10 +61,11 @@ export async function getBoard(tenantId: string, date: string) {
 }
 
 export async function getJob(tenantId: string, jobId: string) {
-  const [job, notes, photos] = await Promise.all([
+  const [job, notes, photos, jobCharges] = await Promise.all([
     queries.findJobDetail(tenantId, jobId),
     queries.listNotes(tenantId, jobId),
     queries.listJobPhotos(tenantId, jobId),
+    charges.getCharges(tenantId, jobId),
   ])
   if (!job) throw new HttpError(404, 'not_found', JOB_NOT_FOUND)
   const { localStart, localEnd, etaLocal, completedLocal, technicianId, technicianName, ...rest } =
@@ -81,6 +83,7 @@ export async function getJob(tenantId: string, jobId: string) {
     notes,
     // `url` is a path under the API; the web app puts the API's address in front.
     photos: photos.map((photo) => ({ id: photo.id, url: `/jobs/${jobId}/photos/${photo.id}` })),
+    charges: jobCharges,
   }
 }
 
