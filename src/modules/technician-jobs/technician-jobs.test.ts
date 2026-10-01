@@ -1,7 +1,16 @@
+import { randomUUID } from 'node:crypto'
 import request from 'supertest'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createJob, createShop, resetDb, signInTechnician } from '../../../test/helpers.ts'
+import {
+  createJob,
+  createShop,
+  resetDb,
+  type Shop,
+  signInTechnician,
+} from '../../../test/helpers.ts'
 import { createApp } from '../../app.ts'
+import { db } from '../../db/client.ts'
+import { bookingDrafts, bookingPhotos } from '../../db/schema.ts'
 import { formatDay } from '../../lib/labels.ts'
 
 vi.mock('../../realtime/index.ts', () => ({ emitToTenant: vi.fn() }))
@@ -19,6 +28,31 @@ function phoenixDay(offset: number) {
     new Date(Date.now() + offset * 24 * 60 * 60 * 1000),
   )
 }
+
+// The first bytes that mark a JPEG.
+const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00])
+
+// A photo the homeowner added while booking `jobId` online: a booked draft with one photo.
+async function addBookingPhoto(shop: Shop, jobId: string, token: string) {
+  const [draft] = await db
+    .insert(bookingDrafts)
+    .values({
+      tenantId: shop.tenant.id,
+      token,
+      name: 'Maria Lopez',
+      phone: '+16025550111',
+      zip: '85004',
+      bookedJobId: jobId,
+    })
+    .returning()
+  const [photo] = await db
+    .insert(bookingPhotos)
+    .values({ tenantId: shop.tenant.id, draftId: draft.id, contentType: 'image/jpeg', data: JPEG })
+    .returning()
+  return photo
+}
+
+const NOT_YOURS = 'This job isn’t assigned to you anymore.'
 
 describe('GET /api/my-jobs', () => {
   it("lists this technician's jobs for today and the next 6 days, by day", async () => {
@@ -85,6 +119,109 @@ describe('GET /api/my-jobs', () => {
     // And technicians still can't open the office's board.
     await request(app)
       .get(`/api/dispatch/board?date=${phoenixDay(0)}`)
+      .set('Cookie', await signInTechnician(shop.mike))
+      .expect(403)
+  })
+})
+
+describe('GET /api/my-jobs/:jobId', () => {
+  it('gives the job page everything for the visit, and nothing office-only', async () => {
+    const shop = await createShop('desert')
+    const today = phoenixDay(0)
+    const job = await createJob(shop, {
+      technicianId: shop.mike.id,
+      at: `${today} 08:00`,
+      vulnerableOccupant: true,
+    })
+    await request(app)
+      .post(`/api/jobs/${job.id}/notes`)
+      .set('Cookie', shop.cookie)
+      .send({ body: 'Gate code 4321' })
+      .expect(201)
+    const photo = await addBookingPhoto(shop, job.id, 'token-a')
+    const cookie = await signInTechnician(shop.mike)
+
+    const res = await request(app).get(`/api/my-jobs/${job.id}`).set('Cookie', cookie).expect(200)
+
+    expect(res.body.job).toEqual({
+      id: job.id,
+      status: 'booked',
+      priority: false,
+      problem: 'AC blowing warm air',
+      systemType: 'central_ac',
+      vulnerableOccupant: true,
+      dateLabel: formatDay(today),
+      windowLabel: '8 AM–12 PM',
+      service: { name: 'AC repair' },
+      customer: { name: 'Maria Lopez', phone: '+16025550111' },
+      property: {
+        street: '12 Palm St',
+        unit: null,
+        city: 'Phoenix',
+        state: 'AZ',
+        zip: '85004',
+        notes: null,
+        equipmentBrand: null,
+        equipmentYear: null,
+      },
+    })
+    expect(res.body.notes).toEqual([
+      expect.objectContaining({ body: 'Gate code 4321', authorName: 'Test office' }),
+    ])
+    expect(res.body.photos).toEqual([
+      { id: photo.id, url: `/my-jobs/${job.id}/photos/${photo.id}` },
+    ])
+
+    const image = await request(app).get(`/api${res.body.photos[0].url}`).set('Cookie', cookie)
+    expect(image.status).toBe(200)
+    expect(image.headers['content-type']).toBe('image/jpeg')
+    expect(image.headers['x-content-type-options']).toBe('nosniff')
+    expect(Buffer.compare(image.body, JPEG)).toBe(0)
+  })
+
+  it("answers the same 404 for any job that isn't this technician's", async () => {
+    const shop = await createShop('desert')
+    const other = await createShop('other')
+    const at = `${phoenixDay(0)} 08:00`
+    const anas = await createJob(shop, { technicianId: shop.ana.id, at })
+    const unassigned = await createJob(shop, { at })
+    const cancelled = await createJob(shop, { technicianId: shop.mike.id, at, status: 'cancelled' })
+    const otherShops = await createJob(other, { technicianId: other.mike.id, at })
+    const anasPhoto = await addBookingPhoto(shop, anas.id, 'token-b')
+    const cookie = await signInTechnician(shop.mike)
+
+    for (const id of [anas.id, unassigned.id, cancelled.id, otherShops.id, randomUUID()]) {
+      const res = await request(app).get(`/api/my-jobs/${id}`).set('Cookie', cookie).expect(404)
+      expect(res.body.error.message).toBe(NOT_YOURS)
+    }
+    await request(app)
+      .get(`/api/my-jobs/${anas.id}/photos/${anasPhoto.id}`)
+      .set('Cookie', cookie)
+      .expect(404)
+    await request(app).get('/api/my-jobs/nope').set('Cookie', cookie).expect(400)
+  })
+
+  it('serves only photos of that job', async () => {
+    const shop = await createShop('desert')
+    const at = `${phoenixDay(0)} 08:00`
+    const job = await createJob(shop, { technicianId: shop.mike.id, at })
+    const anas = await createJob(shop, { technicianId: shop.ana.id, at })
+    const anasPhoto = await addBookingPhoto(shop, anas.id, 'token-c')
+
+    const res = await request(app)
+      .get(`/api/my-jobs/${job.id}/photos/${anasPhoto.id}`)
+      .set('Cookie', await signInTechnician(shop.mike))
+      .expect(404)
+    expect(res.body.error.message).toBe('That photo isn’t on this job.')
+  })
+
+  it('is for technicians only, and they still cannot open office job routes', async () => {
+    const shop = await createShop('desert')
+    const job = await createJob(shop, { technicianId: shop.mike.id, at: `${phoenixDay(0)} 08:00` })
+    await request(app).get(`/api/my-jobs/${job.id}`).expect(401)
+    await request(app).get(`/api/my-jobs/${job.id}`).set('Cookie', shop.cookie).expect(403)
+    await request(app)
+      .get(`/api/jobs/${job.id}`)
       .set('Cookie', await signInTechnician(shop.mike))
       .expect(403)
   })
