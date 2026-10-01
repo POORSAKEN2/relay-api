@@ -14,6 +14,8 @@ export async function sendText(
     kind: (typeof MESSAGE_KINDS)[number]
     body: string
     toUserId?: string // the staff member or technician it goes to
+    jobId?: string // the job it is about
+    customerId?: string // the homeowner it goes to
   },
   tx: Db = db,
 ) {
