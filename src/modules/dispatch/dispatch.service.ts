@@ -1,7 +1,7 @@
-import { db } from '../../db/client.ts'
+import { db, type Tx } from '../../db/client.ts'
 import type { jobs } from '../../db/schema.ts'
 import { HttpError } from '../../lib/http-error.ts'
-import { formatDay, formatWindow, statusLabel, weekdayOf } from '../../lib/labels.ts'
+import { formatDay, formatTime, formatWindow, statusLabel, weekdayOf } from '../../lib/labels.ts'
 import { emitToTenant } from '../../realtime/index.ts'
 import type { SessionUser } from '../accounts/accounts.service.ts'
 import * as audit from '../audit/audit.queries.ts'
@@ -25,6 +25,14 @@ const MOVABLE: JobStatus[] = ['booked', 'no_access']
 
 const JOB_NOT_FOUND = 'This job isn’t on the board anymore. It may have been cancelled.'
 
+type LockedJob = NonNullable<Awaited<ReturnType<typeof queries.lockJob>>>
+
+// "Arriving about 9:10 AM": only while the visit hasn't started, and only once the technician
+// gave a time with "On my way" or "Running late".
+export function arrivalLabel(status: JobStatus, etaLocal: string | null): string | null {
+  return etaLocal && (status === 'booked' || status === 'en_route') ? formatTime(etaLocal) : null
+}
+
 export async function getBoard(tenantId: string, date: string) {
   const [timezone, windows, technicians, jobRows] = await Promise.all([
     queries.findTimezone(tenantId),
@@ -43,9 +51,10 @@ export async function getBoard(tenantId: string, date: string) {
       booked: jobRows.filter((job) => job.windowId === window.id).length,
     })),
     technicians,
-    jobs: jobRows.map(({ localStart, localEnd, ...job }) => ({
+    jobs: jobRows.map(({ localStart, localEnd, etaLocal, ...job }) => ({
       ...job,
       windowLabel: formatWindow(localStart, localEnd),
+      etaLabel: arrivalLabel(job.status, etaLocal),
     })),
   }
 }
@@ -57,12 +66,15 @@ export async function getJob(tenantId: string, jobId: string) {
     queries.listJobPhotos(tenantId, jobId),
   ])
   if (!job) throw new HttpError(404, 'not_found', JOB_NOT_FOUND)
-  const { localStart, localEnd, technicianId, technicianName, ...rest } = job
+  const { localStart, localEnd, etaLocal, completedLocal, technicianId, technicianName, ...rest } =
+    job
   return {
     job: {
       ...rest,
       dateLabel: formatDay(job.date),
       windowLabel: formatWindow(localStart, localEnd),
+      etaLabel: arrivalLabel(job.status, etaLocal),
+      completedLabel: completedLocal ? formatTime(completedLocal) : null,
       technician: technicianId ? { id: technicianId, name: technicianName } : null,
       allowedStatuses: TRANSITIONS[job.status] ?? [],
     },
@@ -120,6 +132,8 @@ export async function moveJob(user: SessionUser, jobId: string, input: SlotInput
       {
         technicianId: input.technicianId,
         ...slot,
+        // A new time or technician makes the old arrival time meaningless.
+        etaAt: null,
         // A no-access visit is booked again once it has a new time.
         ...(!sameSlot && job.status === 'no_access' ? { status: 'booked' as const } : {}),
       },
@@ -162,12 +176,24 @@ export async function moveJob(user: SessionUser, jobId: string, input: SlotInput
   return { jobId, dates: result.dates }
 }
 
-// The office sets a job's status by hand (the technician job page will do it later).
-export async function setStatus(user: SessionUser, jobId: string, to: SettableStatus) {
-  const tenantId = tenantOf(user)
+// One status change, for the office's drawer and the technician's buttons alike: the only
+// place the status rules are applied. `checkJob` runs on the locked job before the rules (the
+// technician side checks the job is still theirs). `afterChange` runs in the same transaction,
+// only when the status really changed (a homeowner text, a note).
+export async function changeStatus(change: {
+  tenantId: string
+  actorUserId: string
+  jobId: string
+  to: JobStatus
+  etaAt?: Date
+  checkJob?: (job: LockedJob) => void
+  afterChange?: (tx: Tx) => Promise<void>
+}) {
+  const { tenantId, jobId, to } = change
   const result = await db.transaction(async (tx) => {
     const job = await queries.lockJob(tenantId, jobId, tx)
     if (!job) throw new HttpError(404, 'not_found', JOB_NOT_FOUND)
+    change.checkJob?.(job)
     // A double click, or someone else got there first: nothing to do.
     if (job.status === to) return { changed: false, date: job.date }
 
@@ -201,6 +227,8 @@ export async function setStatus(user: SessionUser, jobId: string, to: SettableSt
       job.id,
       {
         status: to,
+        // An arrival time belongs to the step it was given for; any other change clears it.
+        etaAt: change.etaAt ?? null,
         ...(to === 'done' ? { completedAt: new Date() } : {}),
         // Job links stop working once a job is closed.
         ...(closing ? { techLinkHash: null, manageLinkHash: null } : {}),
@@ -210,7 +238,7 @@ export async function setStatus(user: SessionUser, jobId: string, to: SettableSt
     await audit.insertUserAction(
       tenantId,
       {
-        actorUserId: user.id,
+        actorUserId: change.actorUserId,
         action: 'job.status_changed',
         entityType: 'job',
         entityId: job.id,
@@ -218,13 +246,25 @@ export async function setStatus(user: SessionUser, jobId: string, to: SettableSt
       },
       tx,
     )
+    await change.afterChange?.(tx)
     return { changed: true, date: job.date }
   })
 
   if (result.changed) {
     emitToTenant(tenantId, 'job.status_changed', { jobId, dates: [result.date] })
   }
-  return { jobId, dates: [result.date] }
+  return result
+}
+
+// The office sets a job's status by hand from the drawer.
+export async function setStatus(user: SessionUser, jobId: string, to: SettableStatus) {
+  const { date } = await changeStatus({
+    tenantId: tenantOf(user),
+    actorUserId: user.id,
+    jobId,
+    to,
+  })
+  return { jobId, dates: [date] }
 }
 
 export async function addNote(user: SessionUser, jobId: string, body: string) {

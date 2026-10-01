@@ -26,6 +26,19 @@ export function formatTime(time: string): string {
   return minutes ? `${hour}:${String(minutes).padStart(2, '0')} ${suffix}` : `${hour} ${suffix}`
 }
 
+// A moment as the contractor's wall clock, '9:10 AM' or '12 PM', for times worked out in code
+// (an arrival time) rather than read from the database already in local time.
+export function formatClock(at: Date, timezone: string): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(at)
+  const part = (type: string) => parts.find((p) => p.type === type)?.value ?? '00'
+  return formatTime(`${part('hour')}:${part('minute')}:00`)
+}
+
 // '8 AM–12 PM'
 export function formatWindow(startsAt: string, endsAt: string): string {
   return `${formatTime(startsAt)}–${formatTime(endsAt)}`
