@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
-import { db } from '../../db/client.ts'
-import { customers, jobs, properties, services, tenants } from '../../db/schema.ts'
+import { type Db, db } from '../../db/client.ts'
+import { customers, jobs, properties, services, tenants, users } from '../../db/schema.ts'
 import { local } from '../dispatch/dispatch.queries.ts'
 
 // Tenant-scoped: every query takes tenantId first. The job page reuses the dispatch module's
@@ -49,3 +49,23 @@ export function listTechnicianJobs(tenantId: string, technicianId: string, days:
       asc(jobs.createdAt),
     )
 }
+
+// Who to text about a job and how to sign it: the homeowner's phone, the contractor's name and
+// time zone, the technician's name. Read inside the transaction that changes the job.
+export async function findJobContact(tenantId: string, jobId: string, tx: Db) {
+  const [contact] = await tx
+    .select({
+      contractorName: tenants.name,
+      timezone: tenants.timezone,
+      customerId: customers.id,
+      customerPhone: customers.phone,
+      technicianName: users.name,
+    })
+    .from(jobs)
+    .innerJoin(tenants, eq(tenants.id, jobs.tenantId))
+    .innerJoin(customers, eq(customers.id, jobs.customerId))
+    .innerJoin(users, eq(users.id, jobs.technicianId))
+    .where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, jobId)))
+  return contact
+}
+export type JobContact = Awaited<ReturnType<typeof findJobContact>>

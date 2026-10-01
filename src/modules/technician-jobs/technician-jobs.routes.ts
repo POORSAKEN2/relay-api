@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { sendPhoto } from '../../lib/send-photo.ts'
 import { requireRole } from '../../middleware/auth.ts'
 import { JobParams, JobPhotoParams } from '../dispatch/dispatch.schemas.ts'
+import { NoAccessInput, OnMyWayInput, RunningLateInput } from './technician-jobs.schemas.ts'
 import * as technicianJobs from './technician-jobs.service.ts'
 
 // The technician's side of jobs. Who they are comes from the session, never the request.
@@ -21,4 +22,32 @@ technicianJobsRoutes.get('/my-jobs/:jobId', technician, async (req, res) => {
 technicianJobsRoutes.get('/my-jobs/:jobId/photos/:photoId', technician, async (req, res) => {
   const { jobId, photoId } = JobPhotoParams.parse(req.params)
   sendPhoto(res, await technicianJobs.getMyJobPhoto(req.user!, jobId, photoId))
+})
+
+technicianJobsRoutes.post('/my-jobs/:jobId/on-my-way', technician, async (req, res) => {
+  const { jobId } = JobParams.parse(req.params)
+  const { minutes } = OnMyWayInput.parse(req.body)
+  res.json(await technicianJobs.onMyWay(req.user!, jobId, minutes))
+})
+
+technicianJobsRoutes.post('/my-jobs/:jobId/running-late', technician, async (req, res) => {
+  const { jobId } = JobParams.parse(req.params)
+  const { minutes } = RunningLateInput.parse(req.body)
+  res.json(await technicianJobs.runningLate(req.user!, jobId, minutes))
+})
+
+technicianJobsRoutes.post('/my-jobs/:jobId/start', technician, async (req, res) => {
+  const { jobId } = JobParams.parse(req.params)
+  res.json(await technicianJobs.startJob(req.user!, jobId))
+})
+
+technicianJobsRoutes.post('/my-jobs/:jobId/no-access', technician, async (req, res) => {
+  const { jobId } = JobParams.parse(req.params)
+  const { note } = NoAccessInput.parse(req.body)
+  res.json(await technicianJobs.noAccess(req.user!, jobId, note))
+})
+
+technicianJobsRoutes.post('/my-jobs/:jobId/complete', technician, async (req, res) => {
+  const { jobId } = JobParams.parse(req.params)
+  res.json(await technicianJobs.completeJob(req.user!, jobId))
 })

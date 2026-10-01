@@ -152,6 +152,8 @@ describe('GET /api/my-jobs/:jobId', () => {
       vulnerableOccupant: true,
       dateLabel: formatDay(today),
       windowLabel: '8 AM–12 PM',
+      etaLabel: null,
+      completedLabel: null,
       service: { name: 'AC repair' },
       customer: { name: 'Maria Lopez', phone: '+16025550111' },
       property: {
