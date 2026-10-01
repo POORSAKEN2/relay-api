@@ -11,8 +11,9 @@ import {
 } from '../../../test/helpers.ts'
 import { createApp } from '../../app.ts'
 import { db } from '../../db/client.ts'
-import { auditEvents, priceItems } from '../../db/schema.ts'
+import { auditEvents, type jobs, priceItems } from '../../db/schema.ts'
 import { emitToTenant } from '../../realtime/index.ts'
+import { addBookedLines } from '../charges/charges.service.ts'
 
 vi.mock('../../realtime/index.ts', () => ({ emitToTenant: vi.fn() }))
 
@@ -42,12 +43,13 @@ async function addPrice(shop: Shop, name: string, priceCents: number, archived =
 }
 
 // One of Mike's jobs today, in progress, and his session.
-async function mikesJob() {
+async function mikesJob(values: Partial<typeof jobs.$inferInsert> = {}) {
   const shop = await createShop('desert')
   const job = await createJob(shop, {
     technicianId: shop.mike.id,
     at: `${today()} 08:00`,
     status: 'in_progress',
+    ...values,
   })
   return { shop, job, cookie: await signInTechnician(shop.mike) }
 }
@@ -130,10 +132,44 @@ describe('POST /api/my-jobs/:jobId/repairs', () => {
       .expect(422)
     expect(gone.body.error.message).toBe('That price isn’t on the list anymore.')
 
+    const other = await createShop('other')
+    const othersPrice = await addPrice(other, 'Other shop part', 7000)
+    const foreign = await repairs(cookie, job.id)
+      .add({ priceItemId: othersPrice.id, quantity: 1 })
+      .expect(422)
+    expect(foreign.body.error.message).toBe('That price isn’t on the list anymore.')
+
     const tooMany = await repairs(cookie, job.id)
       .add({ priceItemId: price.id, quantity: 21 })
       .expect(400)
     expect(tooMany.body.error.details.quantity).toEqual(['Pick a quantity from 1 to 20'])
+  })
+})
+
+describe('the job page charge lines', () => {
+  it('lists the booked lines first, then repairs as they were added', async () => {
+    const { shop, job, cookie } = await mikesJob({ priority: true, priorityFeeCents: 4900 })
+    await addBookedLines(shop.tenant.id, job.id, db)
+    const thermostat = await addPrice(shop, 'Thermostat replacement', 21000)
+    const capacitor = await addPrice(shop, 'Capacitor replacement', 18500)
+    const jobRepairs = repairs(cookie, job.id)
+    await jobRepairs.add({ priceItemId: thermostat.id, quantity: 1 }).expect(200)
+    await jobRepairs.add({ priceItemId: capacitor.id, quantity: 1 }).expect(200)
+
+    const res = await request(app).get(`/api/my-jobs/${job.id}`).set('Cookie', cookie).expect(200)
+
+    const { lines } = res.body.charges
+    expect(lines.map((line: { description: string }) => line.description)).toEqual([
+      'AC repair (diagnostic fee)',
+      'Priority service',
+      'Thermostat replacement',
+      'Capacitor replacement',
+    ])
+    expect(lines.slice(0, 2).map((line: { removable: boolean }) => line.removable)).toEqual([
+      false,
+      false,
+    ])
+    expect(res.body.charges.approvedTotalCents).toBe(8900 + 4900)
   })
 })
 
