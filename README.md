@@ -102,7 +102,7 @@ The seed creates one contractor, **Desert Breeze Air** (slug `desert`), with 3 t
 | `admin@relay.test` | Relay superadmin | `/admin` (contractor branding) |
 | Sam Patel, Rita Gomez, Luis Moreno | Technicians | `/jobs` (placeholder until the jobs module) |
 
-Every demo account uses the same development password: the `DEV_PASSWORD` value in [src/db/seed.ts](src/db/seed.ts).
+Every email account uses the same development password: the `DEV_PASSWORD` value in [src/db/seed.ts](src/db/seed.ts).
 
 Technicians have no password. They sign in at **http://desert.localhost:5173/sign-in/phone** with their mobile number: Sam Patel `(480) 555-0301`, Rita Gomez `(480) 555-0302`, Luis Moreno `(480) 555-0303`. Nothing is really texted yet: the code shows up in the `relay-api` terminal, on the line `Development only: the text that would be sent`.
 

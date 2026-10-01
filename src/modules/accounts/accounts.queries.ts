@@ -19,7 +19,9 @@ export async function findSessionWithUser(id: string) {
     .select({ session: sessions, user: users })
     .from(sessions)
     .innerJoin(users, eq(sessions.userId, users.id))
-    .where(eq(sessions.id, id))
+    // Deactivation deletes sessions, but a sign-in racing it could insert one afterwards.
+    // Checking here makes deactivation hold whatever the order.
+    .where(and(eq(sessions.id, id), isNull(users.disabledAt)))
     .limit(1)
   return row
 }

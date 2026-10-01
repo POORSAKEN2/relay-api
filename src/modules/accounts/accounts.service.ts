@@ -47,7 +47,8 @@ async function startSession(user: User) {
 }
 
 // Texts a 6-digit sign-in code to an active technician. An unknown number gets the same
-// (empty) answer, so nobody can use this to find out which numbers are technicians'.
+// (empty) answer, so the answer does not reveal which numbers are technicians'. The
+// response time can still differ slightly.
 export async function requestSignInCode(phone: string) {
   const found = await queries.findTechnicianByPhone(phone)
   if (!found) return

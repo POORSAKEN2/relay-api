@@ -43,6 +43,11 @@ temporary `sendText()` in `src/modules/messaging/sms.ts`. It only saves a `queue
       everyone) and register a 10DLC campaign that covers one-time passcodes.
 - [ ] Decide whether the development-only log of every text in `sendText()` stays. It is how
       developers without Twilio keys read sign-in codes.
+- [ ] Make the 5-codes-per-hour cap atomic (delete, count and insert in one transaction that
+      locks the technician's row), since the address limiter doesn't stop a burst from many
+      addresses.
+- [ ] Consider a daily cap on sign-in texts per phone, with an alert, since someone who knows
+      a technician's number can use up their codes and tries.
 
 ## Should have
 
