@@ -5,6 +5,8 @@ import { emitToTenant } from '../../realtime/index.ts'
 import type { SessionUser } from '../accounts/accounts.service.ts'
 import * as audit from '../audit/audit.queries.ts'
 import { tenantOf } from '../booking/booking.service.ts'
+import * as catalog from '../catalog/catalog.service.ts'
+import * as charges from '../charges/charges.service.ts'
 import * as dispatchQueries from '../dispatch/dispatch.queries.ts'
 import { arrivalLabel, changeStatus } from '../dispatch/dispatch.service.ts'
 import { sendText } from '../messaging/sms.ts'
@@ -69,10 +71,11 @@ async function findMyJob(user: SessionUser, jobId: string) {
 export async function getMyJob(user: SessionUser, jobId: string) {
   const job = await findMyJob(user, jobId)
   const tenantId = tenantOf(user)
-  const [notes, photos, timezone] = await Promise.all([
+  const [notes, photos, timezone, jobCharges] = await Promise.all([
     dispatchQueries.listNotes(tenantId, jobId),
     dispatchQueries.listJobPhotos(tenantId, jobId),
     dispatchQueries.findTimezone(tenantId),
+    charges.getCharges(tenantId, jobId),
   ])
   return {
     job: {
@@ -96,6 +99,7 @@ export async function getMyJob(user: SessionUser, jobId: string) {
     notes,
     // `url` is a path under the API; the web app puts the API's address in front.
     photos: photos.map((photo) => ({ id: photo.id, url: `/my-jobs/${jobId}/photos/${photo.id}` })),
+    charges: jobCharges,
   }
 }
 
@@ -242,4 +246,49 @@ export async function runningLate(user: SessionUser, jobId: string, minutes: num
   // The board and the technician's pages reload on this event and show the new time.
   emitToTenant(tenantId, 'job.status_changed', { jobId, dates: [date] })
   return getMyJob(user, jobId)
+}
+
+// The price list a technician picks repairs from.
+export function listPriceList(user: SessionUser) {
+  return catalog.listActivePriceItems(tenantOf(user))
+}
+
+// Repairs on one of the technician's own jobs. Each checks the job is theirs, changes it
+// through charges (where the rules live), and answers with the refreshed job page.
+async function changeMyRepairs(
+  user: SessionUser,
+  jobId: string,
+  change: (
+    actor: { tenantId: string; userId: string },
+    checkJob: (job: { technicianId: string | null }) => void,
+  ) => Promise<void>,
+) {
+  await findMyJob(user, jobId)
+  await change({ tenantId: tenantOf(user), userId: user.id }, (job) => {
+    // The office may have reassigned the job since the check above.
+    if (job.technicianId !== user.id) throw notYours()
+  })
+  return getMyJob(user, jobId)
+}
+
+export function addRepair(
+  user: SessionUser,
+  jobId: string,
+  input: { priceItemId: string; quantity: number },
+) {
+  return changeMyRepairs(user, jobId, (actor, checkJob) =>
+    charges.proposeRepair(actor, jobId, input, checkJob),
+  )
+}
+
+export function removeRepair(user: SessionUser, jobId: string, itemId: string) {
+  return changeMyRepairs(user, jobId, (actor, checkJob) =>
+    charges.removeRepair(actor, jobId, itemId, checkJob),
+  )
+}
+
+export function decideRepairs(user: SessionUser, jobId: string, decision: 'approved' | 'declined') {
+  return changeMyRepairs(user, jobId, (actor, checkJob) =>
+    charges.decideRepairs(actor, jobId, decision, checkJob),
+  )
 }

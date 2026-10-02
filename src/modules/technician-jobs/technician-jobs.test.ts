@@ -223,6 +223,7 @@ describe('GET /api/my-jobs/:jobId', () => {
     expect(res.body.photos).toEqual([
       { id: photo.id, url: `/my-jobs/${job.id}/photos/${photo.id}` },
     ])
+    expect(res.body.charges).toEqual({ lines: [], approvedTotalCents: 0, proposedTotalCents: 0 })
 
     const image = await request(app).get(`/api${res.body.photos[0].url}`).set('Cookie', cookie)
     expect(image.status).toBe(200)

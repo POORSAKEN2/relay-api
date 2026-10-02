@@ -10,6 +10,7 @@ import {
   callbackRequests,
   consentEvents,
   customers,
+  jobItems,
   jobs,
   properties,
   serviceAreaZips,
@@ -251,6 +252,27 @@ describe('POST /api/online-booking/bookings', () => {
     const res = await post('bookings', bookingBody(shop, { priorityService: true })).expect(201)
     const [job] = await db.select().from(jobs).where(eq(jobs.id, res.body.jobId))
     expect(job).toMatchObject({ priority: true, priorityFeeCents: 4900, vulnerableOccupant: false })
+  })
+
+  it('writes the booked lines: the service, and priority service when chosen', async () => {
+    const shop = await createServingShop()
+    await setPriorityFee(shop, 4900)
+
+    const res = await post('bookings', bookingBody(shop, { priorityService: true })).expect(201)
+
+    const lines = await db
+      .select({
+        description: jobItems.description,
+        unitPriceCents: jobItems.unitPriceCents,
+        status: jobItems.status,
+      })
+      .from(jobItems)
+      .where(eq(jobItems.jobId, res.body.jobId))
+      .orderBy(jobItems.description)
+    expect(lines).toEqual([
+      { description: 'AC repair (diagnostic fee)', unitPriceCents: 8900, status: 'approved' },
+      { description: 'Priority service', unitPriceCents: 4900, status: 'approved' },
+    ])
   })
 
   it('ignores a priority request when the contractor doesn’t offer priority service', async () => {

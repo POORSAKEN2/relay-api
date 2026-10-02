@@ -13,7 +13,7 @@ import { formatDay, formatWindow } from '../../lib/labels.ts'
 import { emitToTenant } from '../../realtime/index.ts'
 import * as audit from '../audit/audit.queries.ts'
 import * as booking from '../booking/booking.queries.ts'
-import { reserveWindow } from '../booking/booking.service.ts'
+import { insertBookedJob, reserveWindow } from '../booking/booking.service.ts'
 import * as customers from '../customers/customers.queries.ts'
 import { sendText } from '../messaging/sms.ts'
 import { zipIsServed } from '../settings/settings.queries.ts'
@@ -264,7 +264,7 @@ export async function bookVisit(tenant: Tenant, input: BookingInput, ip: string 
         tx,
       ))
 
-    const job = await booking.insertJob(
+    const job = await insertBookedJob(
       tenant.id,
       {
         customerId: customer.id,

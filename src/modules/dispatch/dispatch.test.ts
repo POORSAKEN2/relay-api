@@ -161,6 +161,8 @@ describe('GET /api/jobs/:jobId', () => {
       expect.objectContaining({ body: 'Gate code 4321', authorName: 'Test office' }),
     ])
     expect(res.body.photos).toEqual([]) // booked by the office: no homeowner photos
+    // A job made straight in the database has no booked lines.
+    expect(res.body.charges).toEqual({ lines: [], approvedTotalCents: 0, proposedTotalCents: 0 })
   })
 
   it("404s for another contractor's job", async () => {

@@ -1,6 +1,6 @@
 import { and, asc, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 import { type Db, db, type Tx } from '../../db/client.ts'
-import { services } from '../../db/schema.ts'
+import { priceItems, services } from '../../db/schema.ts'
 
 // Tenant-scoped: every query takes tenantId first.
 
@@ -90,4 +90,84 @@ export async function lockActiveServiceIds(tenantId: string, tx: Tx) {
 
 export async function setSortOrder(tenantId: string, serviceId: string, sortOrder: number, tx: Tx) {
   await tx.update(services).set({ sortOrder }).where(isServiceOf(tenantId, serviceId))
+}
+
+const priceColumns = {
+  id: priceItems.id,
+  name: priceItems.name,
+  priceCents: priceItems.priceCents,
+  archivedAt: priceItems.archivedAt,
+}
+
+const isPriceItemOf = (tenantId: string, priceItemId: string) =>
+  and(eq(priceItems.tenantId, tenantId), eq(priceItems.id, priceItemId))
+
+// Active prices first, then archived ones, each by name.
+export function listPriceItems(tenantId: string) {
+  return db
+    .select(priceColumns)
+    .from(priceItems)
+    .where(eq(priceItems.tenantId, tenantId))
+    .orderBy(sql`${priceItems.archivedAt} is not null`, asc(priceItems.name))
+}
+
+// What a technician can add to a job: active prices by name.
+export function listActivePriceItems(tenantId: string) {
+  return db
+    .select({ id: priceItems.id, name: priceItems.name, priceCents: priceItems.priceCents })
+    .from(priceItems)
+    .where(and(eq(priceItems.tenantId, tenantId), isNull(priceItems.archivedAt)))
+    .orderBy(asc(priceItems.name))
+}
+
+export async function findPriceItem(tenantId: string, priceItemId: string) {
+  const [item] = await db
+    .select(priceColumns)
+    .from(priceItems)
+    .where(isPriceItemOf(tenantId, priceItemId))
+  return item
+}
+
+type PriceItemValues = Pick<typeof priceItems.$inferInsert, 'name' | 'priceCents'>
+
+export async function insertPriceItem(tenantId: string, values: PriceItemValues) {
+  const [item] = await db
+    .insert(priceItems)
+    .values({ ...values, tenantId })
+    .returning(priceColumns)
+  return item
+}
+
+// Returns the price when it was found (and updated), undefined otherwise.
+export async function updatePriceItem(
+  tenantId: string,
+  priceItemId: string,
+  values: PriceItemValues,
+) {
+  const [item] = await db
+    .update(priceItems)
+    .set(values)
+    .where(isPriceItemOf(tenantId, priceItemId))
+    .returning(priceColumns)
+  return item
+}
+
+// Returns the price only when this call archived it.
+export async function archivePriceItem(tenantId: string, priceItemId: string) {
+  const [item] = await db
+    .update(priceItems)
+    .set({ archivedAt: new Date() })
+    .where(and(isPriceItemOf(tenantId, priceItemId), isNull(priceItems.archivedAt)))
+    .returning(priceColumns)
+  return item
+}
+
+// Returns the price only when this call restored it.
+export async function restorePriceItem(tenantId: string, priceItemId: string) {
+  const [item] = await db
+    .update(priceItems)
+    .set({ archivedAt: null })
+    .where(and(isPriceItemOf(tenantId, priceItemId), isNotNull(priceItems.archivedAt)))
+    .returning(priceColumns)
+  return item
 }

@@ -2,7 +2,14 @@ import { Router } from 'express'
 import { sendPhoto } from '../../lib/send-photo.ts'
 import { requireRole } from '../../middleware/auth.ts'
 import { JobParams, JobPhotoParams } from '../dispatch/dispatch.schemas.ts'
-import { NoAccessInput, OnMyWayInput, RunningLateInput } from './technician-jobs.schemas.ts'
+import {
+  DecisionInput,
+  NoAccessInput,
+  OnMyWayInput,
+  RepairInput,
+  RepairParams,
+  RunningLateInput,
+} from './technician-jobs.schemas.ts'
 import * as technicianJobs from './technician-jobs.service.ts'
 
 // The technician's side of jobs. Who they are comes from the session, never the request.
@@ -12,6 +19,10 @@ const technician = requireRole('technician')
 
 technicianJobsRoutes.get('/my-jobs', technician, async (req, res) => {
   res.json(await technicianJobs.listMyJobs(req.user!))
+})
+
+technicianJobsRoutes.get('/my-jobs/price-items', technician, async (req, res) => {
+  res.json({ priceItems: await technicianJobs.listPriceList(req.user!) })
 })
 
 technicianJobsRoutes.get('/my-jobs/:jobId', technician, async (req, res) => {
@@ -50,4 +61,21 @@ technicianJobsRoutes.post('/my-jobs/:jobId/no-access', technician, async (req, r
 technicianJobsRoutes.post('/my-jobs/:jobId/complete', technician, async (req, res) => {
   const { jobId } = JobParams.parse(req.params)
   res.json(await technicianJobs.completeJob(req.user!, jobId))
+})
+
+technicianJobsRoutes.post('/my-jobs/:jobId/repairs', technician, async (req, res) => {
+  const { jobId } = JobParams.parse(req.params)
+  const input = RepairInput.parse(req.body)
+  res.json(await technicianJobs.addRepair(req.user!, jobId, input))
+})
+
+technicianJobsRoutes.delete('/my-jobs/:jobId/repairs/:itemId', technician, async (req, res) => {
+  const { jobId, itemId } = RepairParams.parse(req.params)
+  res.json(await technicianJobs.removeRepair(req.user!, jobId, itemId))
+})
+
+technicianJobsRoutes.post('/my-jobs/:jobId/repairs/decision', technician, async (req, res) => {
+  const { jobId } = JobParams.parse(req.params)
+  const { decision } = DecisionInput.parse(req.body)
+  res.json(await technicianJobs.decideRepairs(req.user!, jobId, decision))
 })
