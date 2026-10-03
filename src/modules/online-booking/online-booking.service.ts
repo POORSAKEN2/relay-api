@@ -1,5 +1,4 @@
 import { randomBytes } from 'node:crypto'
-import { env } from '../../config/env.ts'
 import { type Db, db, type Tx } from '../../db/client.ts'
 import {
   BOOKING_PHOTO_MAX_BYTES,
@@ -10,6 +9,7 @@ import {
 import { HttpError } from '../../lib/http-error.ts'
 import { photoTypeOf } from '../../lib/image-type.ts'
 import { formatDay, formatWindow } from '../../lib/labels.ts'
+import { tenantUrl } from '../../lib/tenant-url.ts'
 import { emitToTenant } from '../../realtime/index.ts'
 import * as audit from '../audit/audit.queries.ts'
 import * as booking from '../booking/booking.queries.ts'
@@ -348,18 +348,12 @@ export async function sendRecoveryTexts() {
   return drafts.length
 }
 
-// The address of a contractor's booking page that opens a draft: their own domain once it is
-// verified, else their subdomain. Always https with no port, which is wrong on a developer's
-// machine; fine while texts are only saved (docs/real-texting-todo.md).
+// The address of a contractor's booking page that opens a draft.
 function bookingLink(
   tenant: { slug: string; customDomain: string | null; customDomainVerifiedAt: Date | null },
   token: string,
 ) {
-  const host =
-    tenant.customDomain && tenant.customDomainVerifiedAt
-      ? tenant.customDomain
-      : `${tenant.slug}.${env.APP_DOMAIN}`
-  return `https://${host}/?resume=${token}`
+  return tenantUrl(tenant, `/?resume=${token}`)
 }
 
 async function checkServiceAndZip(tenantId: string, serviceId: string, zip: string, tx: Db) {

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { eq } from 'drizzle-orm'
+import { asc, eq } from 'drizzle-orm'
 import request from 'supertest'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -15,6 +15,7 @@ import {
   WEDNESDAY,
 } from '../../../test/helpers.ts'
 import { createApp } from '../../app.ts'
+import { env } from '../../config/env.ts'
 import { db } from '../../db/client.ts'
 import {
   auditEvents,
@@ -22,6 +23,7 @@ import {
   bookingPhotos,
   jobPhotos,
   jobs,
+  messages,
   users,
 } from '../../db/schema.ts'
 import { emitToTenant } from '../../realtime/index.ts'
@@ -308,6 +310,35 @@ describe('PUT /api/jobs/:jobId/slot', () => {
     })
     const audit = await db.select().from(auditEvents)
     expect(audit.map((event) => event.action)).toEqual(['job.assigned'])
+  })
+
+  it('texts the technician a link to the job when assigned, moved or reassigned', async () => {
+    const shop = await createShop('desert')
+    const job = await createJob(shop)
+    const put = (body: object) =>
+      request(app).put(`/api/jobs/${job.id}/slot`).set('Cookie', shop.cookie).send(body).expect(200)
+    const texts = () => db.select().from(messages).orderBy(asc(messages.createdAt))
+
+    await put({ date: TUESDAY, windowId: shop.tueMorning.id, technicianId: shop.mike.id })
+    await put({ date: TUESDAY, windowId: shop.tueAfternoon.id, technicianId: shop.mike.id })
+    // Nothing changed: no text.
+    await put({ date: TUESDAY, windowId: shop.tueAfternoon.id, technicianId: shop.mike.id })
+    await put({ date: TUESDAY, windowId: shop.tueAfternoon.id, technicianId: shop.ana.id })
+    // Unassigning texts nobody.
+    await put({ date: TUESDAY, windowId: shop.tueAfternoon.id, technicianId: null })
+
+    const sent = await texts()
+    const link = `https://desert.${env.APP_DOMAIN}/jobs/${job.id}`
+    expect(sent.map((text) => [text.contact, text.kind, text.toUserId, text.jobId])).toEqual([
+      [shop.mike.phone, 'job_assigned', shop.mike.id, job.id],
+      [shop.mike.phone, 'job_assigned', shop.mike.id, job.id],
+      [shop.ana.phone, 'job_assigned', shop.ana.id, job.id],
+    ])
+    expect(sent[0].body).toContain('New job')
+    expect(sent[0].body).toContain(link)
+    expect(sent[1].body).toContain('Job changed')
+    expect(sent[1].body).toContain('12 PM-4 PM')
+    expect(sent[2].body).toContain('New job')
   })
 
   it('moves a job to another day and unassigns it, refreshing both days', async () => {

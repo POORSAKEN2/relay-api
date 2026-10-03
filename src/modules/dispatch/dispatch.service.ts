@@ -2,11 +2,13 @@ import { db, type Tx } from '../../db/client.ts'
 import type { jobs } from '../../db/schema.ts'
 import { HttpError } from '../../lib/http-error.ts'
 import { formatDay, formatTime, formatWindow, statusLabel, weekdayOf } from '../../lib/labels.ts'
+import { tenantUrl } from '../../lib/tenant-url.ts'
 import { emitToTenant } from '../../realtime/index.ts'
 import type { SessionUser } from '../accounts/accounts.service.ts'
 import * as audit from '../audit/audit.queries.ts'
 import { reserveWindow, tenantOf } from '../booking/booking.service.ts'
 import * as charges from '../charges/charges.service.ts'
+import { sendText } from '../messaging/sms.ts'
 import * as queries from './dispatch.queries.ts'
 import type { SettableStatus, SlotInput } from './dispatch.schemas.ts'
 
@@ -196,11 +198,49 @@ export async function moveJob(user: SessionUser, jobId: string, input: SlotInput
         tx,
       )
     }
+    // The technician hears about it even with the app closed.
+    if (input.technicianId) {
+      await textTechnician(
+        tenantId,
+        job.id,
+        input.technicianId,
+        reassigned ? 'assigned' : 'changed',
+        tx,
+      )
+    }
     return { changed: true, dates: [...new Set([job.date, input.date])] }
   })
 
   if (result.changed) emitToTenant(tenantId, 'job.assigned', { jobId, dates: result.dates })
   return { jobId, dates: result.dates }
+}
+
+// Saves a text to the technician with a link to the job page, in the caller's transaction. The
+// page needs the technician signed in; the sign-in page sends them on to the job afterwards.
+// A technician without a phone gets none; the change stands.
+async function textTechnician(
+  tenantId: string,
+  jobId: string,
+  technicianId: string,
+  what: 'assigned' | 'changed',
+  tx: Tx,
+) {
+  const job = await queries.findAssignmentText(tenantId, jobId, technicianId, tx)
+  if (!job?.technicianPhone) return
+  const headline = what === 'assigned' ? 'New job' : 'Job changed'
+  // A plain hyphen: an en dash would make the SMS cost 70 characters instead of 160.
+  const when = `${formatDay(job.date)}, ${formatWindow(job.localStart, job.localEnd).replace('–', '-')}`
+  await sendText(
+    tenantId,
+    {
+      contact: job.technicianPhone,
+      kind: 'job_assigned',
+      body: `${job.contractorName}: ${headline}. ${job.serviceName} in ${job.city}, ${when}. ${tenantUrl(job.tenant, `/jobs/${jobId}`)}`,
+      toUserId: technicianId,
+      jobId,
+    },
+    tx,
+  )
 }
 
 // One status change, for the office's drawer and the technician's buttons alike: the only

@@ -204,6 +204,38 @@ export async function lockJob(tenantId: string, jobId: string, tx: Tx) {
   return job
 }
 
+// What the technician's "job assigned" / "job changed" text says: who, which job, when, and
+// the contractor's address for the link.
+export async function findAssignmentText(
+  tenantId: string,
+  jobId: string,
+  technicianId: string,
+  tx: Db,
+) {
+  const [row] = await tx
+    .select({
+      tenant: {
+        slug: tenants.slug,
+        customDomain: tenants.customDomain,
+        customDomainVerifiedAt: tenants.customDomainVerifiedAt,
+      },
+      contractorName: tenants.name,
+      technicianPhone: users.phone,
+      serviceName: services.name,
+      city: properties.city,
+      date: local(jobs.windowStartsAt, 'YYYY-MM-DD'),
+      localStart: local(jobs.windowStartsAt, 'HH24:MI:SS'),
+      localEnd: local(jobs.windowEndsAt, 'HH24:MI:SS'),
+    })
+    .from(jobs)
+    .innerJoin(tenants, eq(tenants.id, jobs.tenantId))
+    .innerJoin(properties, eq(properties.id, jobs.propertyId))
+    .innerJoin(services, eq(services.id, jobs.serviceId))
+    .innerJoin(users, and(eq(users.tenantId, jobs.tenantId), eq(users.id, technicianId)))
+    .where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, jobId)))
+  return row
+}
+
 export async function jobExists(tenantId: string, jobId: string) {
   const [job] = await db
     .select({ id: jobs.id })
