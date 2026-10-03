@@ -38,3 +38,5 @@ export const ImportSave = ImportCheck.extend({
   fileName: z.string().trim().min(1, 'Name the file').max(200),
 })
 export type ImportSave = z.infer<typeof ImportSave>
+
+export const ImportParams = z.object({ importId: z.uuid('That import link isn’t valid') })

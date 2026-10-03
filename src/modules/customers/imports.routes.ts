@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { requireRole } from '../../middleware/auth.ts'
 import { tenantOf } from '../booking/booking.service.ts'
-import { ImportCheck, ImportSave } from './imports.schemas.ts'
+import { ImportCheck, ImportParams, ImportSave } from './imports.schemas.ts'
 import * as imports from './imports.service.ts'
 
 // Spreadsheet import. Mounted before customersRoutes so '/customers/imports' is never read as
@@ -18,4 +18,13 @@ importsRoutes.post('/customers/imports/check', staff, async (req, res) => {
 importsRoutes.post('/customers/imports', staff, async (req, res) => {
   const input = ImportSave.parse(req.body)
   res.status(201).json(await imports.save(req.user!, input))
+})
+
+importsRoutes.get('/customers/imports', staff, async (req, res) => {
+  res.json(await imports.list(tenantOf(req.user!)))
+})
+
+importsRoutes.post('/customers/imports/:importId/undo', staff, async (req, res) => {
+  const { importId } = ImportParams.parse(req.params)
+  res.json(await imports.undo(tenantOf(req.user!), importId))
 })

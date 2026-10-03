@@ -1,7 +1,13 @@
 import { eq } from 'drizzle-orm'
 import request from 'supertest'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { createShop, resetDb, type Shop, signInTechnician } from '../../../test/helpers.ts'
+import {
+  createJob,
+  createShop,
+  resetDb,
+  type Shop,
+  signInTechnician,
+} from '../../../test/helpers.ts'
 import { createApp } from '../../app.ts'
 import { db } from '../../db/client.ts'
 import { consentEvents, customerImports, customers, properties } from '../../db/schema.ts'
@@ -142,5 +148,72 @@ describe('POST /api/customers/imports', () => {
       message: 'Nothing to import: no row is ready.',
     })
     expect(await db.$count(customerImports)).toBe(1)
+  })
+})
+
+describe('GET /api/customers/imports', () => {
+  it('lists the latest imports with who ran them', async () => {
+    const shop = await createShop('desert')
+    await postAs(shop, '/api/customers/imports', { fileName: 'customers.xlsx', rows }).expect(201)
+    const res = await request(app)
+      .get('/api/customers/imports')
+      .set('Cookie', shop.cookie)
+      .expect(200)
+    expect(res.body.imports).toEqual([
+      {
+        id: expect.any(String),
+        fileName: 'customers.xlsx',
+        createdByName: shop.office.name,
+        createdCount: 2,
+        skippedCount: 3,
+        keptCount: null,
+        createdAt: expect.any(String),
+        undoneAt: null,
+      },
+    ])
+  })
+})
+
+describe('POST /api/customers/imports/:importId/undo', () => {
+  it('removes the imported customers, keeping one who has a job', async () => {
+    const shop = await createShop('desert')
+    const saved = await postAs(shop, '/api/customers/imports', {
+      fileName: 'customers.xlsx',
+      rows,
+    }).expect(201)
+    const [tom] = await db.select().from(customers).where(eq(customers.name, 'Tom Reyes'))
+    const [tomAddress] = await db.select().from(properties).where(eq(properties.customerId, tom.id))
+    await createJob(shop, { customerId: tom.id, propertyId: tomAddress.id })
+
+    const res = await postAs(shop, `/api/customers/imports/${saved.body.importId}/undo`, {}).expect(
+      200,
+    )
+    expect(res.body).toEqual({ removed: 1, kept: 1 })
+    const left = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.importId, saved.body.importId))
+    expect(left.map((customer) => customer.name)).toEqual(['Tom Reyes'])
+    const [batch] = await db.select().from(customerImports)
+    expect(batch).toMatchObject({ undoneAt: expect.any(Date), keptCount: 1 })
+
+    const again = await postAs(
+      shop,
+      `/api/customers/imports/${saved.body.importId}/undo`,
+      {},
+    ).expect(409)
+    expect(again.body.error.message).toBe('This import was already undone.')
+  })
+
+  it('can’t undo another contractor’s import', async () => {
+    const shop = await createShop('desert')
+    const other = await createShop('other')
+    const saved = await postAs(other, '/api/customers/imports', { fileName: 'x.csv', rows }).expect(
+      201,
+    )
+    const res = await postAs(shop, `/api/customers/imports/${saved.body.importId}/undo`, {}).expect(
+      404,
+    )
+    expect(res.body.error.message).toBe('That import wasn’t found.')
   })
 })

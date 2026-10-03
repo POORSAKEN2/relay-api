@@ -81,3 +81,25 @@ export async function save(user: SessionUser, input: ImportSave) {
     }
   })
 }
+
+// Past imports shows this many.
+const IMPORTS_SHOWN = 20
+
+export async function list(tenantId: string) {
+  return { imports: await queries.listImports(tenantId, IMPORTS_SHOWN) }
+}
+
+// Takes an import back: removes the customers it added, except any with history since.
+export async function undo(tenantId: string, importId: string) {
+  return db.transaction(async (tx) => {
+    const batch = await queries.lockImport(tenantId, importId, tx)
+    if (!batch) throw new HttpError(404, 'not_found', 'That import wasn’t found.')
+    if (batch.undoneAt) {
+      throw new HttpError(409, 'already_undone', 'This import was already undone.')
+    }
+    const removed = await queries.removeImportedCustomers(tenantId, importId, tx)
+    const kept = await queries.countImportedCustomers(tenantId, importId, tx)
+    await queries.markUndone(tenantId, importId, kept, tx)
+    return { removed, kept }
+  })
+}
