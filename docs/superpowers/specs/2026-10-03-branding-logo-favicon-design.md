@@ -64,8 +64,9 @@ Rules:
 - `logo_url` and `favicon_url` are dropped. Nothing ever wrote them, so they are null in every
   database. The API response keeps the names `logoUrl` and `faviconUrl` and builds them from
   the asset ids.
-- Migration `0009` creates the table, adds the columns and foreign keys, and drops the two
-  old columns.
+- Migration `0009` creates the table and adds the columns and foreign keys. Migration `0010`
+  drops the two old columns. They are two migrations because drizzle-kit asks interactively
+  whether a column was renamed when one generate both adds and drops columns on a table.
 
 The kind is not enforced by the foreign key: the service only ever puts a `logo` asset in
 `logo_asset_id` and a `favicon` asset in `favicon_asset_id`.
