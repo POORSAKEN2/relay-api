@@ -25,6 +25,24 @@ export function brandingAssetTypeOf(bytes: Buffer): BrandingAssetType | null {
   return svgText(bytes) === null ? null : 'image/svg+xml'
 }
 
+// Skips leading XML comments and at most one DOCTYPE, so an SVG that opens with either is
+// still recognised by what follows.
+function leadingMarkupSkipped(text: string): string {
+  let rest = text
+  let doctypeSeen = false
+  for (;;) {
+    const comment = /^<!--[\s\S]*?-->\s*/.exec(rest)
+    if (comment) {
+      rest = rest.slice(comment[0].length)
+      continue
+    }
+    const doctype = doctypeSeen ? null : /^<!doctype[^>]*>\s*/i.exec(rest)
+    if (!doctype) return rest
+    doctypeSeen = true
+    rest = rest.slice(doctype[0].length)
+  }
+}
+
 // An SVG has no signature, so it's recognised by its text: valid UTF-8 that starts with
 // `<svg` or an XML prolog and has an svg element. Returns that text, BOM and leading
 // whitespace removed, or null.
@@ -35,12 +53,18 @@ export function svgText(bytes: Buffer): string | null {
   } catch {
     return null
   }
-  const start = text.replace(/^﻿/, '').trimStart()
-  if (!start.startsWith('<svg') && !start.startsWith('<?xml')) return null
+  const start = text.trimStart()
+  const body = leadingMarkupSkipped(start)
+  if (!body.startsWith('<svg') && !body.startsWith('<?xml')) return null
   return /<svg[\s>/]/i.test(start) ? start : null
 }
 
-const UNSAFE_SVG_PATTERNS = [/<script/i, /<foreignobject/i, /\son[a-z]+\s*=/i, /javascript:/i]
+const UNSAFE_SVG_PATTERNS = [
+  /<([\w-]+:)?script/i,
+  /<([\w-]+:)?foreignobject/i,
+  /\son[a-z]+\s*=/i,
+  /javascript:/i,
+]
 const HREF = /(?:xlink:)?href\s*=\s*["']?([^"'\s>]*)/gi
 
 // Defense in depth: assets are only shown through <img> and favicons, and served with a

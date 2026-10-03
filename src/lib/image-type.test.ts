@@ -16,7 +16,22 @@ describe('brandingAssetTypeOf', () => {
   it.each([
     ['a plain SVG', SVG],
     ['an SVG with an XML prolog', `<?xml version="1.0" encoding="UTF-8"?>\n${SVG}`],
-    ['an SVG after a BOM and whitespace', `﻿ \n  ${SVG}`],
+    [
+      'an SVG after a leading comment',
+      `<!-- Generator: Adobe Illustrator -->
+${SVG}`,
+    ],
+    [
+      'an SVG after a DOCTYPE',
+      `<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">${SVG}`,
+    ],
+    [
+      'an SVG after a comment and a DOCTYPE',
+      `<!-- a --> <!-- b -->
+<!DOCTYPE svg>
+${SVG}`,
+    ],
+    ['an SVG after a BOM and whitespace', `\uFEFF \n  ${SVG}`],
   ])('recognises %s', (_label, text) => {
     expect(brandingAssetTypeOf(Buffer.from(text))).toBe('image/svg+xml')
   })
@@ -26,6 +41,7 @@ describe('brandingAssetTypeOf', () => {
     ['text that only mentions <svg later', Buffer.from('hello <svg></svg>')],
     ['an XML file without an svg element', Buffer.from('<?xml version="1.0"?><note/>')],
     ['bytes that are not UTF-8', Buffer.from([0x3c, 0x73, 0x76, 0x67, 0xff, 0xfe])],
+    ['a comment-first file that is not an SVG', Buffer.from('<!-- x --><note/>')],
     ['an empty file', Buffer.alloc(0)],
   ])('refuses %s', (_label, bytes) => {
     expect(brandingAssetTypeOf(bytes)).toBeNull()
@@ -39,7 +55,7 @@ describe('brandingAssetTypeOf', () => {
 
 describe('svgText', () => {
   it('gives the text without the BOM and leading whitespace', () => {
-    expect(svgText(Buffer.from(`﻿  ${SVG}`))).toBe(SVG)
+    expect(svgText(Buffer.from(`\uFEFF  ${SVG}`))).toBe(SVG)
   })
 
   it('is null for a PNG', () => {
@@ -52,6 +68,8 @@ describe('isUnsafeSvg', () => {
     ['a script element', '<svg><script>alert(1)</script></svg>'],
     ['a script element in capitals', '<svg><SCRIPT>alert(1)</SCRIPT></svg>'],
     ['a foreignObject', '<svg><foreignObject><div/></foreignObject></svg>'],
+    ['a prefixed script element', '<svg><x:script>alert(1)</x:script></svg>'],
+    ['a prefixed foreignObject', '<svg><x:foreignObject><div/></x:foreignObject></svg>'],
     ['an event attribute', '<svg onload="alert(1)"></svg>'],
     ['an event attribute with spaces', '<svg><rect onclick = "x()"/></svg>'],
     ['a javascript: link', '<svg><a href="javascript:alert(1)"><rect/></a></svg>'],
