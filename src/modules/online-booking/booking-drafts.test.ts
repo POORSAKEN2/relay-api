@@ -11,6 +11,7 @@ import {
   jobs,
   messages,
   serviceAreaZips,
+  tenants,
 } from '../../db/schema.ts'
 import { CONSENT_WORDING, sendRecoveryTexts } from './online-booking.service.ts'
 
@@ -265,6 +266,20 @@ describe('sendRecoveryTexts', () => {
 
     expect(await sendRecoveryTexts()).toBe(0)
     expect(await db.select().from(messages)).toHaveLength(1)
+  })
+
+  it('does not text the homeowners of a suspended contractor', async () => {
+    const live = await createServingShop('desert')
+    const off = await createServingShop('gone')
+    await insertDraft(live, 'live-token')
+    await insertDraft(off, 'off-token')
+    await db.update(tenants).set({ status: 'suspended' }).where(eq(tenants.id, off.tenant.id))
+
+    expect(await sendRecoveryTexts()).toBe(1)
+
+    const saved = await db.select().from(messages)
+    expect(saved).toHaveLength(1)
+    expect(saved[0].tenantId).toBe(live.tenant.id)
   })
 
   it('leaves alone every draft that must not be texted', async () => {

@@ -67,76 +67,7 @@ Input (zod, `CreateTenantInput`):
 | Field | Rule |
 | --- | --- |
 | `name` | trimmed, 1–100 characters |
-| `slug` | lowercased, `^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?# Contractor lifecycle: add, list, go live and turn off contractors from the admin page
-
-Date: 2026-10-03. Status: draft. Plan: `docs/superpowers/plans/2026-10-03-contractor-lifecycle.md`.
-
-Sub-project 1 of the white-label admin work. The others, in order: logo and favicon upload,
-branding history and revert, branding editor polish (hex input, contrast warning), live
-preview. Custom domains, phone numbers and 10DLC, and email from the contractor's domain
-come later, once vendors are picked.
-
-## Problem
-
-Contractors exist only in `db:seed`. The superadmin can edit the colors of a contractor that
-already exists, but can't add one or turn one off. `tenants.status` (`setup`, `live`,
-`suspended`) is stored but nothing reads it, so a suspended contractor would keep working.
-
-## Goal
-
-1. The superadmin adds a contractor and its first owner from the admin page.
-2. The owner can sign in right away with a temporary password that the admin sees once.
-3. The superadmin moves a contractor between `setup`, `live` and `suspended`.
-4. A suspended contractor is fully off: its booking page is unavailable, and its owner,
-   office staff and technicians can't sign in. Existing sessions stop working at once.
-5. Turning a contractor back on restores everything. Nothing is deleted.
-6. The admin page lists contractors with their status and a search box.
-
-## Out of scope
-
-- Forcing the owner to change the temporary password. There is no change-password flow yet;
-  it gets its own small spec.
-- Emailed invites. They replace the temporary password once email sending (sub-project 8)
-  exists.
-- Deleting contractors. Turning one off covers it and keeps the history.
-- Editing a contractor's details (name, contact, timezone) after creation.
-- Contractor stats in the list (technician count, jobs this month).
-
-## Statuses
-
-| Status | Booking page | Staff sign-in | Meaning |
-| --- | --- | --- | --- |
-| `setup` | works | works | New contractor, being set up. The admin can preview the booking page. |
-| `live` | works | works | Taking real bookings. |
-| `suspended` | `410` | refused | Turned off. Data kept. |
-
-Every move between the three is allowed. `setup` and `live` behave the same in this
-sub-project; later work (texting, billing) can treat them differently.
-
-## API: `modules/tenants` (new)
-
-The routes live in a new `tenants` module. `listTenants` moves there from `modules/branding`.
-`modules/branding` keeps the branding routes and `findTenantByHost` / `findTenantById`.
-All three routes need `requireRole('superadmin')`.
-
-### `GET /api/admin/tenants`
-
-Same route as today, with more fields. Ordered by name.
-
-```json
-{ "tenants": [{ "id": "…", "slug": "desert", "name": "Desert Breeze Air",
-  "status": "live", "contactEmail": "office@desert.test",
-  "contactPhone": "+16025550142", "createdAt": "2026-10-03T…" }] }
-```
-
-### `POST /api/admin/tenants`
-
-Input (zod, `CreateTenantInput`):
-
-| Field | Rule |
-| --- | --- |
-| `name` | trimmed, 1–100 characters |
- (the database's `tenants_slug_format` check), not reserved |
+| `slug` | lowercased, `^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$` (the database's `tenants_slug_format` check), not reserved |
 | `timezone` | a valid IANA zone (checked with `Intl.supportedValuesOf('timeZone')`) |
 | `contactEmail` | email, lowercased |
 | `contactPhone` | a US number in any format (`UsPhone`), stored as E.164 |

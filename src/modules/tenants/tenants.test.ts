@@ -222,6 +222,27 @@ describe('PATCH /api/admin/tenants/:tenantId/status', () => {
     ])
   })
 
+  it('moves a contractor back into setup from live or suspended', async () => {
+    const desert = await createTenant('desert')
+    const { cookie } = await signedInAdmin()
+    const url = `/api/admin/tenants/${desert.id}/status`
+    const move = (status: string) =>
+      request(app).patch(url).set('Cookie', cookie).send({ status }).expect(200)
+
+    await move('live')
+    const fromLive = await move('setup')
+    expect(fromLive.body.tenant).toMatchObject({ id: desert.id, status: 'setup' })
+    await move('suspended')
+    await move('setup')
+
+    expect((await statusEvents(desert.id)).map((e) => e.data)).toEqual([
+      { from: 'setup', to: 'live' },
+      { from: 'live', to: 'setup' },
+      { from: 'setup', to: 'suspended' },
+      { from: 'suspended', to: 'setup' },
+    ])
+  })
+
   it('signs out everyone at a suspended contractor, and nobody else', async () => {
     const desert = await createTenant('desert')
     const other = await createTenant('other')
