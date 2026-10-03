@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { SYSTEM_TYPES } from '../../db/schema.ts'
-import { LocalDate, OptionalEmail, UsPhone, UsState, Zip } from '../../lib/fields.ts'
+import { LocalDate, OptionalEmail, Phone, UsState, Zip } from '../../lib/fields.ts'
 
 // What a homeowner sends from the booking page. Messages are shown next to the field as-is.
 
@@ -11,7 +11,7 @@ export const ZipParams = z.object({ zip: Zip })
 // Step 2 exit: outside the service area, asks for a call back.
 export const CallbackInput = z.object({
   name: Name,
-  phone: UsPhone,
+  phone: Phone,
   zip: Zip,
   message: z.string().trim().max(1000, 'Keep the message to 1,000 characters or fewer').optional(),
 })
@@ -21,7 +21,7 @@ export type CallbackInput = z.infer<typeof CallbackInput>
 // draft this browser already has, sent when the homeowner comes back to the step.
 export const DraftInput = z.object({
   name: Name,
-  phone: UsPhone,
+  phone: Phone,
   zip: Zip,
   consent: z.boolean().default(false),
   token: z.string().optional(),
@@ -44,7 +44,7 @@ export const WaitlistInput = z.object({
   serviceId: z.uuid('Pick a service'),
   zip: Zip,
   name: Name,
-  phone: UsPhone,
+  phone: Phone,
   vulnerableOccupant: z.boolean().default(false),
   consent: z.literal(true, 'Tick the box so we can text you when a time opens'),
 })
@@ -60,7 +60,7 @@ export const BookingInput = z.object({
   vulnerableOccupant: z.boolean().default(false),
   priorityService: z.boolean().default(false),
   name: Name,
-  phone: UsPhone,
+  phone: Phone,
   email: OptionalEmail,
   street: z.string('Enter the street address').trim().min(1, 'Enter the street address').max(200),
   unit: z.string().trim().max(50).optional(),

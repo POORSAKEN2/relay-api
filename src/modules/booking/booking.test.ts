@@ -293,7 +293,7 @@ describe('POST /api/bookings', () => {
     expect(res.body.error.message).toBe('Check the highlighted fields.')
     expect(res.body.error.details).toEqual({
       'newCustomer.name': ['Enter the customer’s name'],
-      'newCustomer.phone': ['Enter a 10-digit phone number'],
+      'newCustomer.phone': ['Enter a mobile number, like 0917 123 4567'],
       'newProperty.state': ['Enter a 2-letter state, like AZ'],
       'newProperty.zip': ['Enter a 5-digit ZIP code'],
       problem: ['Describe the problem'],

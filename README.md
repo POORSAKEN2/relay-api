@@ -104,7 +104,7 @@ The seed creates one contractor, **Desert Breeze Air** (slug `desert`), with 3 t
 
 Every email account uses the same development password: the `DEV_PASSWORD` value in [src/db/seed.ts](src/db/seed.ts).
 
-Technicians have no password. They sign in at **http://desert.localhost:5173/sign-in/phone** with their mobile number: Sam Patel `(480) 555-0301`, Rita Gomez `(480) 555-0302`, Luis Moreno `(480) 555-0303`. Nothing is really texted yet: the code shows up in the `relay-api` terminal, on the line `Development only: the text that would be sent`.
+Technicians have no password. They sign in at **http://desert.localhost:5173/sign-in/phone** with their mobile number: Sam Patel `(480) 555-0301`, Rita Gomez `(480) 555-0302`, Luis Moreno `(480) 555-0303`. With the default `SMS_PROVIDER=log` nothing is really texted: the code shows up in the `relay-api` terminal, on the line `Development only: the text`. To get real texts, see [Real texts with httpSMS](#real-texts-with-httpsms).
 
 Plain http://localhost:5173 (no subdomain) shows the contractor's own website when `../contractor-site` exists; its **Book online** buttons lead to `desert.localhost:5173`.
 
@@ -140,6 +140,10 @@ The API tests run against `relay_test` and set up its tables themselves.
 | `desert.localhost` doesn't load | Use Chrome, Edge or Firefox. |
 | "Too many sign-in attempts. Try again in 15 minutes." | Sign-in allows 10 tries per 15 minutes. Wait, or restart the API to reset the counter. |
 | Signed out after `npm run db:seed` | Expected: seeding clears all sessions. Sign in again. |
+
+## Real texts with httpSMS
+
+The demo sends texts from an Android phone with a Philippine SIM, through [httpSMS](https://httpsms.com). Step-by-step setup, the rules Relay applies, and what to check when a text doesn't arrive: [docs/httpsms-setup.md](docs/httpsms-setup.md).
 
 ## Scripts
 

@@ -135,7 +135,7 @@ describe('readImportRow', () => {
       ok: false,
       problems: [
         'Enter the customer’s name',
-        'Enter a 10-digit phone number',
+        'Enter a mobile number, like 0917 123 4567',
         'Enter a valid email address',
         'Enter the city',
         'Enter a 2-letter state, like AZ',

@@ -1,12 +1,12 @@
 import { z } from 'zod'
-import { Email, OptionalEmail, UsPhone, UsState, Zip } from '../../lib/fields.ts'
+import { Email, OptionalEmail, Phone, UsState, Zip } from '../../lib/fields.ts'
 
 // Contact and address rules for every way a customer is added or changed: the office's
 // booking form, the customers screen and, later, spreadsheet import.
 
 export const NewCustomer = z.object({
   name: z.string().trim().min(1, 'Enter the customer’s name').max(200),
-  phone: UsPhone,
+  phone: Phone,
   email: OptionalEmail,
 })
 
@@ -51,7 +51,7 @@ export const CustomerNotes = optionalText(2000, 'Keep the notes under 2,000 char
 export const CustomerChanges = z
   .object({
     name: NewCustomer.shape.name.optional(),
-    phone: UsPhone.optional(),
+    phone: Phone.optional(),
     email: z.preprocess(blankToNull, Email.nullish()),
     notes: CustomerNotes,
   })

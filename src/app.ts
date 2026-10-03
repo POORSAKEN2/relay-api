@@ -14,6 +14,7 @@ import { catalogRoutes } from './modules/catalog/catalog.routes.ts'
 import { customersRoutes } from './modules/customers/customers.routes.ts'
 import { importsRoutes } from './modules/customers/imports.routes.ts'
 import { dispatchRoutes } from './modules/dispatch/dispatch.routes.ts'
+import { webhooksRoutes } from './modules/messaging/webhooks.routes.ts'
 import { onlineBookingRoutes } from './modules/online-booking/online-booking.routes.ts'
 import { settingsRoutes } from './modules/settings/settings.routes.ts'
 import { teamRoutes } from './modules/team/team.routes.ts'
@@ -58,6 +59,7 @@ export function createApp() {
     settingsRoutes,
     teamRoutes,
     technicianJobsRoutes,
+    webhooksRoutes,
   )
 
   app.use((_req, res) => {

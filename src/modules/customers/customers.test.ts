@@ -76,6 +76,7 @@ describe('GET /api/customers', () => {
       tenantId: shop.tenant.id,
       name: 'Bob Marley',
       email: 'bob@reggae.test',
+      phone: '+639171234567',
       source: 'office',
     })
     const search = (q: string) => getAs(shop, `/api/customers?q=${encodeURIComponent(q)}`)
@@ -84,6 +85,7 @@ describe('GET /api/customers', () => {
     expect(names(await search('palm st'))).toEqual(['Maria Lopez'])
     expect(names(await search('reggae'))).toEqual(['Bob Marley'])
     expect(names(await search('(602) 555-01'))).toEqual(['Maria Lopez'])
+    expect(names(await search('0917 123'))).toEqual(['Bob Marley']) // PH, typed the local way
     expect(names(await search('zzz'))).toEqual([])
   })
 

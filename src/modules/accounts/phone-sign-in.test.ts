@@ -53,7 +53,7 @@ describe('POST /api/auth/phone/code', () => {
       tenantId: tenant.id,
       channel: 'sms',
       direction: 'outbound',
-      status: 'queued',
+      status: 'sent', // sent at once, not by the loop; tests only log it
       kind: 'sign_in_code',
       contact: tech.phone,
       toUserId: tech.id,
@@ -73,7 +73,7 @@ describe('POST /api/auth/phone/code', () => {
       .post('/api/auth/phone/code')
       .send({ phone: '555-01' })
       .expect(400)
-    expect(res.body.error.details).toEqual({ phone: ['Enter a 10-digit phone number'] })
+    expect(res.body.error.details).toEqual({ phone: ['Enter a mobile number, like 0917 123 4567'] })
   })
 })
 

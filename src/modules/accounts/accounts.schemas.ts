@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { UsPhone } from '../../lib/fields.ts'
+import { Phone } from '../../lib/fields.ts'
 
 export const SignInInput = z.object({
   email: z.email().toLowerCase(),
@@ -7,10 +7,10 @@ export const SignInInput = z.object({
 })
 
 // Technicians type their mobile number in any US format.
-export const PhoneCodeInput = z.object({ phone: UsPhone })
+export const PhoneCodeInput = z.object({ phone: Phone })
 
 export const PhoneSignInInput = z.object({
-  phone: UsPhone,
+  phone: Phone,
   code: z
     .string()
     .trim()

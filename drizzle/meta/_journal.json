@@ -78,6 +78,13 @@
       "when": 1791037017221,
       "tag": "0010_technician_job_photos",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1791044232658,
+      "tag": "0011_sms_outbox",
+      "breakpoints": true
     }
   ]
 }

@@ -147,7 +147,7 @@ describe('POST /api/online-booking/drafts', () => {
     const bad = await call('post', 'drafts')
       .send(draftBody({ phone: '555' }))
       .expect(400)
-    expect(bad.body.error.details.phone).toEqual(['Enter a 10-digit phone number'])
+    expect(bad.body.error.details.phone).toEqual(['Enter a mobile number, like 0917 123 4567'])
     expect(await db.select().from(bookingDrafts)).toHaveLength(0)
   })
 })
@@ -239,6 +239,16 @@ async function insertDraft(
     createdAt: minutesAgo(120),
     ...overrides,
   })
+  // Ticking the box on the contact step also records the consent, as saveDraftContact does.
+  if (overrides.smsConsent !== false) {
+    await db.insert(consentEvents).values({
+      tenantId: shop.tenant.id,
+      contact: overrides.phone ?? '+14805550199',
+      channel: 'sms',
+      granted: true,
+      source: 'booking_form',
+    })
+  }
 }
 
 describe('sendRecoveryTexts', () => {
