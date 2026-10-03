@@ -27,49 +27,49 @@ through `webhook_events`, and moves statuses forward only.
 
 ## Task 1: phones
 
-- [ ] `src/lib/fields.ts`: `UsPhone` → `Phone` (PH `09…` / `639…`, any `+` E.164, US 10 or
+- [x] `src/lib/fields.ts`: `UsPhone` → `Phone` (PH `09…` / `639…`, any `+` E.164, US 10 or
       11 digits). Rename at every import.
-- [ ] `src/lib/fields.test.ts`: every row of the spec's phone table, plus refusals.
-- [ ] Update the old copy `Enter a 10-digit phone number` in the API tests.
-- [ ] relay-web `src/lib/format.ts`: `formatPhone` shows `+639171234567` as `0917 123 4567`.
-- [ ] relay-web booking contact step: plain phone field, placeholder `0917 123 4567`; drop
+- [x] `src/lib/fields.test.ts`: every row of the spec's phone table, plus refusals.
+- [x] Update the old copy `Enter a 10-digit phone number` in the API tests.
+- [x] relay-web `src/lib/format.ts`: `formatPhone` shows `+639171234567` as `0917 123 4567`.
+- [x] relay-web booking contact step: plain phone field, placeholder `0917 123 4567`; drop
       `UsPhoneInput` and `UsFlag`. Fix `problem-rows.test.ts` copy.
-- [ ] Typecheck and tests in both repos; commit.
+- [x] Typecheck and tests in both repos; commit.
 
 ## Task 2: schema, settings, seed
 
-- [ ] `schema.ts`: `messages.sendAfter`, `attempts`, `lastError`, checks, `messages_due_idx`;
+- [x] `schema.ts`: `messages.sendAfter`, `attempts`, `lastError`, checks, `messages_due_idx`;
       `WEBHOOK_PROVIDERS` + `'httpsms'`.
-- [ ] `npm run db:generate` → `drizzle/0011_*.sql`; compare with the schema draft; migrate dev
+- [x] `npm run db:generate` → `drizzle/0011_*.sql`; compare with the schema draft; migrate dev
       and test databases.
-- [ ] `env.ts`: `SMS_PROVIDER` (`log` | `httpsms`, default `log`), `HTTPSMS_API_KEY`,
+- [x] `env.ts`: `SMS_PROVIDER` (`log` | `httpsms`, default `log`), `HTTPSMS_API_KEY`,
       `HTTPSMS_WEBHOOK_SIGNING_KEY` (both required with `httpsms`), `SEED_SMS_NUMBER`.
       Tests in `env.test.ts`. `.env.example` entries.
-- [ ] `seed.ts`: `desert` timezone `Asia/Manila`; `phone_numbers` row from `SEED_SMS_NUMBER`.
-- [ ] Commit.
+- [x] `seed.ts`: `desert` timezone `Asia/Manila`; `phone_numbers` row from `SEED_SMS_NUMBER`.
+- [x] Commit.
 
 ## Task 3: rules and `sendText()`
 
-- [ ] `src/modules/messaging/rules.ts`: `ruleFor(kind)` → `{ consent: 'required' | 'opt_out' |
+- [x] `src/modules/messaging/rules.ts`: `ruleFor(kind)` → `{ consent: 'required' | 'opt_out' |
       'none', quietHours: boolean }`, and `quietUntil(now, timezone, start, end)`.
-- [ ] `rules.test.ts`: every kind in `MESSAGE_KINDS` placed; quiet window across midnight.
-- [ ] `sms.ts`: consent lookup, quiet hours, `blocked` rows; sign-in codes sent at once.
-- [ ] `sms.test.ts`; commit.
+- [x] `rules.test.ts`: every kind in `MESSAGE_KINDS` placed; quiet window across midnight.
+- [x] `sms.ts`: consent lookup, quiet hours, `blocked` rows; sign-in codes sent at once.
+- [x] `sms.test.ts`; commit.
 
 ## Task 4: provider and sender loop
 
-- [ ] `src/modules/messaging/httpsms.ts`: `sendSms({ from, to, content, requestId })`.
-- [ ] `src/modules/messaging/sender.ts`: `sendDueTexts()`, `startSender()`, `stopSender()`.
-- [ ] `server.ts`: start after jobs, stop before them.
-- [ ] `sender.test.ts` with `vi.mock('./httpsms.ts')`; commit.
+- [x] `src/modules/messaging/httpsms.ts`: `sendSms({ from, to, content, requestId })`.
+- [x] `src/modules/messaging/sender.ts`: `sendDueTexts()`, `startSender()`, `stopSender()`.
+- [x] `server.ts`: start after jobs, stop before them.
+- [x] `sender.test.ts` with `vi.mock('./httpsms.ts')`; commit.
 
 ## Task 5: webhook
 
-- [ ] `npm install jose`.
-- [ ] `src/modules/messaging/webhooks.routes.ts` + service code; mount in `app.ts`.
-- [ ] `webhooks.test.ts` (supertest, `SignJWT`); commit.
+- [x] `npm install jose`.
+- [x] `src/modules/messaging/webhooks.routes.ts` + service code; mount in `app.ts`.
+- [x] `webhooks.test.ts` (supertest, `SignJWT`); commit.
 
 ## Task 6: docs
 
-- [ ] `docs/real-texting-todo.md`: tick what was built; US-only items under "US launch".
-- [ ] README: how to set up the httpSMS phone, keys, and a tunnel for webhooks. Commit.
+- [x] `docs/real-texting-todo.md`: tick what was built; US-only items under "US launch".
+- [x] README: how to set up the httpSMS phone, keys, and a tunnel for webhooks. Commit.

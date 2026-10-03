@@ -1,48 +1,34 @@
-# Real texting: to build later
+# Real texting: what is left
 
-Booking recovery (`docs/superpowers/specs/2026-09-30-booking-recovery-design.md`) ships with a
-temporary `sendText()` in `src/modules/messaging/sms.ts`. It only saves a `queued` row to
-`messages` and logs it. No text leaves the system. This file lists what is missing before it can.
+Real texts go out through httpSMS for the Philippine demo
+(`docs/superpowers/specs/2026-10-04-sms-service-design.md`). This file lists what is still
+missing, and what a US launch would need on top.
 
-## Must have before sending real texts
+## Done (2026-10-04, httpSMS)
 
-- [ ] Twilio account, a sending number per contractor (`phone_numbers` table already exists),
-      and the keys in `.env` and `src/config/env.ts`.
-- [ ] Replace the body of `sendText()` with the Twilio call. Keep the `messages` row: set
-      `provider_message_id`, and move status from `queued` to `sent`, `failed` or `blocked`.
-      A real send can't be rolled back, so `sendRecoveryTexts` must then mark the draft as
-      texted before it sends, not in the same transaction.
-- [ ] Compliance gate inside `sendText()`: no consent means `blocked` with reason
-      `no_consent`; an opt-out means `blocked` with reason `opted_out`. Current consent is the
-      newest `consent_events` row for the contractor, phone and channel.
-- [ ] Delivery-status webhook: update `messages.status` to `delivered` or `failed`. Store the
-      raw payload in `webhook_events`, checking the Twilio signature first.
-- [ ] Inbound webhook for STOP and START replies: write a `consent_events` row with source
-      `sms_reply` and its `message_id`, and honor it on every later send.
-- [ ] Legal review of the consent wording (`CONSENT_WORDING` in `online-booking.service.ts`).
-      A US telecom lawyer must approve it before real sending. Today it says "texts and calls
-      about my visit": check that it covers a text about a booking the homeowner did not
-      finish. 10DLC registration for the sending numbers is also required in the US.
-- [ ] Quiet hours: no texts before 8 AM or after 9 PM in the homeowner's local time
-      (`tenants.quiet_hours_start` and `quiet_hours_end` already exist).
+- [x] A sending number per contractor (`phone_numbers`), keys in `.env` and `src/config/env.ts`.
+- [x] `sendText()` saves the text in the caller's transaction; the sender loop sends it after the
+      commit, so `sendRecoveryTexts` marking the draft in the same transaction is right.
+- [x] Compliance gate: `blocked` with `no_consent` or `opted_out` (`src/modules/messaging/rules.ts`).
+- [x] Delivery-status webhook, with repeats ignored through `webhook_events`.
+- [x] STOP and START replies write `consent_events` with source `sms_reply`.
+- [x] Quiet hours: unprompted texts wait until `quiet_hours_end` (`send_after`).
+- [x] Staff texts (sign-in codes, job alerts) skip consent and quiet hours. Sign-in codes are
+      sent right away and their body is still never stored.
+- [x] Sign-in codes come from the contractor's own sending number.
+- [x] The development log of every text stays, under `SMS_PROVIDER=log`.
+
+## Still to build
+
 - [ ] The resume link (`bookingLink` in `online-booking.service.ts`) is always
-      `https://<host>/`. That is wrong on a developer's machine (`http`, port 5173). Fine while
-      texts are only saved; fix it before testing real texts locally.
+      `https://<host>/`. A homeowner's phone can't open `localhost`, so a demo needs the web app
+      on a public address (a tunnel or a deploy) and this link pointing at it.
 - [ ] Decide what happens after the gas / carbon monoxide safety stop. A homeowner who taps
       "Yes" there already has a draft, so an hour later they would get "finish your booking",
       right after being told not to book online. Most likely: mark the draft so it is never
       texted (one more column, set by a small API call from the safety screen).
-- [ ] Once texts really go out, tell the homeowner in the wizard's Exit dialog: "We'll text
-      you a link to finish." It was left out on purpose so the page never promises a text
-      that isn't sent.
-- [ ] Technician sign-in codes (`sign_in_code`) and other staff texts go to the contractor's
-      own people, not homeowners: the consent check and quiet hours must not block them. Send
-      `text.body` to Twilio, but keep storing the placeholder body for `sign_in_code`: the code
-      itself must never be saved.
-- [ ] Pick the number sign-in codes come from (the contractor's own, or one Relay number for
-      everyone) and register a 10DLC campaign that covers one-time passcodes.
-- [ ] Decide whether the development-only log of every text in `sendText()` stays. It is how
-      developers without Twilio keys read sign-in codes.
+- [ ] Now that texts really go out, tell the homeowner in the wizard's Exit dialog: "We'll text
+      you a link to finish."
 - [ ] Make the 5-codes-per-hour cap atomic (delete, count and insert in one transaction that
       locks the technician's row), since the address limiter doesn't stop a burst from many
       addresses.
@@ -60,7 +46,18 @@ temporary `sendText()` in `src/modules/messaging/sms.ts`. It only saves a `queue
 - [ ] A second reminder text, if the first one gets a good response.
 - [ ] A per-contractor switch to turn recovery texts off.
 
+## US launch
+
+- [ ] Twilio in place of httpSMS: replace `src/modules/messaging/httpsms.ts` and the webhook,
+      checking the Twilio signature.
+- [ ] Legal review of the consent wording (`CONSENT_WORDING` in `online-booking.service.ts`).
+      A US telecom lawyer must approve it before real sending. Today it says "texts and calls
+      about my visit": check that it covers a text about a booking the homeowner did not
+      finish, and a text-back to a missed caller who never ticked the box.
+- [ ] 10DLC registration for the sending numbers, including a campaign that covers one-time
+      passcodes.
+
 ## Cost to plan for
 
-Each text costs money, and US carriers add fees for registered numbers. Estimate the monthly
-volume before choosing a plan.
+Each text costs money: the SIM's load for httpSMS, per-message fees and carrier fees for
+registered numbers in the US. Estimate the monthly volume before choosing a plan.

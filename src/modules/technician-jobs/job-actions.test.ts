@@ -215,7 +215,7 @@ describe('No access', () => {
     const [text] = await db.select().from(messages)
     expect(text.kind).toBe('no_access')
     expect(text.body).toMatch(
-      /^desert HVAC: Mike came by at \d{1,2}(:\d{2})? (AM|PM) but couldn’t reach you\. We’ll call you to set a new time\.$/,
+      /^desert HVAC: Mike came by at \d{1,2}(:\d{2})? (AM|PM) but couldn't reach you\. We'll call you to set a new time\.$/,
     )
   })
 

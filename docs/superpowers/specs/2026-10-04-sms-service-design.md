@@ -1,6 +1,6 @@
 # SMS service: real texts through httpSMS
 
-Date: 2026-10-04. Status: draft. Schema draft: `2026-10-04-sms-service-schema.sql`.
+Date: 2026-10-04. Status: approved. Plan: `docs/superpowers/plans/2026-10-04-sms-service.md`. Schema draft: `2026-10-04-sms-service-schema.sql`.
 
 ## Problem
 
