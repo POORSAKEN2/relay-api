@@ -22,3 +22,19 @@ export const ImportRow = z.object({
   notes: Cell,
 })
 export type ImportRow = z.infer<typeof ImportRow>
+
+export const IMPORT_ROW_LIMIT = 5000
+
+export const ImportCheck = z.object({
+  addressInOneColumn: z.boolean().default(false),
+  rows: z
+    .array(ImportRow)
+    .min(1, 'The file has no rows to import')
+    .max(IMPORT_ROW_LIMIT, 'Import up to 5,000 rows at a time'),
+})
+export type ImportCheck = z.infer<typeof ImportCheck>
+
+export const ImportSave = ImportCheck.extend({
+  fileName: z.string().trim().min(1, 'Name the file').max(200),
+})
+export type ImportSave = z.infer<typeof ImportSave>
