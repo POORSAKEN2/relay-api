@@ -26,3 +26,8 @@ export const CustomerListQuery = z.object({
   page: z.coerce.number().int().min(1).catch(1),
 })
 export type CustomerListQuery = z.infer<typeof CustomerListQuery>
+
+// The office adds a customer from the customers screen: the contact, and the address when
+// they have it.
+export const NewCustomerInput = NewCustomer.extend({ property: NewProperty.optional() })
+export type NewCustomerInput = z.infer<typeof NewCustomerInput>

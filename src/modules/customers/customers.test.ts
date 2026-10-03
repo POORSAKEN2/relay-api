@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm'
 import request from 'supertest'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
@@ -10,7 +11,7 @@ import {
 } from '../../../test/helpers.ts'
 import { createApp } from '../../app.ts'
 import { db } from '../../db/client.ts'
-import { customers } from '../../db/schema.ts'
+import { customers, properties } from '../../db/schema.ts'
 
 const app = createApp()
 
@@ -139,5 +140,62 @@ describe('GET /api/customers', () => {
     const shop = await createShop('desert')
     const res = await getAs(shop, '/api/customers?q=%25%25')
     expect(res.body.customers).toEqual([])
+  })
+})
+
+describe('POST /api/customers', () => {
+  function postAs(shop: Shop, body: object) {
+    return request(app).post('/api/customers').set('Cookie', shop.cookie).send(body)
+  }
+
+  it('adds a customer for the office, without an address', async () => {
+    const shop = await createShop('desert')
+    const res = await postAs(shop, {
+      name: ' Tom Reyes ',
+      phone: '(602) 555-0144',
+      email: '',
+    }).expect(201)
+
+    const [saved] = await db.select().from(customers).where(eq(customers.id, res.body.id))
+    expect(saved).toMatchObject({
+      name: 'Tom Reyes',
+      phone: '+16025550144',
+      email: null,
+      source: 'office',
+    })
+  })
+
+  it('saves the address in the same step', async () => {
+    const shop = await createShop('desert')
+    const res = await postAs(shop, {
+      name: 'Tom Reyes',
+      phone: '6025550144',
+      property: { street: '88 W Main St', unit: '', city: 'Mesa', state: 'az', zip: '85201' },
+    }).expect(201)
+
+    const saved = await db.select().from(properties).where(eq(properties.customerId, res.body.id))
+    expect(saved).toEqual([
+      expect.objectContaining({
+        street: '88 W Main St',
+        unit: null,
+        city: 'Mesa',
+        state: 'AZ',
+        zip: '85201',
+      }),
+    ])
+  })
+
+  it('needs the whole address once a street is typed, and a real phone', async () => {
+    const shop = await createShop('desert')
+    const res = await postAs(shop, {
+      name: 'Tom Reyes',
+      phone: '555',
+      property: { street: '88 W Main St', city: '', state: 'AZ', zip: '' },
+    }).expect(400)
+    expect(Object.keys(res.body.error.details).sort()).toEqual([
+      'phone',
+      'property.city',
+      'property.zip',
+    ])
   })
 })
