@@ -1,6 +1,13 @@
 import request from 'supertest'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { createShop, resetDb } from '../../../test/helpers.ts'
+import {
+  createJob,
+  createShop,
+  resetDb,
+  type Shop,
+  TUESDAY,
+  WEDNESDAY,
+} from '../../../test/helpers.ts'
 import { createApp } from '../../app.ts'
 import { db } from '../../db/client.ts'
 import { customers } from '../../db/schema.ts'
@@ -9,66 +16,128 @@ const app = createApp()
 
 beforeEach(resetDb)
 
+function getAs(shop: Shop, path: string) {
+  return request(app).get(path).set('Cookie', shop.cookie).expect(200)
+}
+
+// The names on one page of the list, in order.
+const names = (res: request.Response) =>
+  res.body.customers.map((customer: { name: string }) => customer.name)
+
 describe('GET /api/customers', () => {
-  it('finds customers by name or phone digits, with their addresses', async () => {
+  it('lists everyone by name when nothing is typed, with their addresses', async () => {
     const shop = await createShop('desert')
     await db
       .insert(customers)
-      .values({ tenantId: shop.tenant.id, name: 'Bob Marley', source: 'office' })
+      .values({ tenantId: shop.tenant.id, name: 'Zed Young', source: 'office' })
 
-    const byName = await request(app)
-      .get('/api/customers?q=lopez')
-      .set('Cookie', shop.cookie)
-      .expect(200)
-    expect(byName.body.customers).toEqual([
-      {
-        id: shop.customer.id,
-        name: 'Maria Lopez',
-        phone: '+16025550111',
-        email: null,
-        properties: [
-          {
-            id: shop.property.id,
-            street: '12 Palm St',
-            unit: null,
-            city: 'Phoenix',
-            state: 'AZ',
-            zip: '85004',
-          },
-        ],
-      },
+    const res = await getAs(shop, '/api/customers')
+    expect(names(res)).toEqual(['Maria Lopez', 'Zed Young'])
+    expect(res.body.total).toBe(2)
+    expect(res.body.pageSize).toBe(25)
+    expect(res.body.customers[0]).toEqual({
+      id: shop.customer.id,
+      name: 'Maria Lopez',
+      phone: '+16025550111',
+      email: null,
+      properties: [
+        {
+          id: shop.property.id,
+          street: '12 Palm St',
+          unit: null,
+          city: 'Phoenix',
+          state: 'AZ',
+          zip: '85004',
+          equipmentBrand: null,
+          equipmentYear: null,
+          notes: null,
+        },
+      ],
+      lastVisitDate: null,
+      nextVisitDate: null,
+    })
+  })
+
+  it('finds customers by name, street, email or phone digits', async () => {
+    const shop = await createShop('desert')
+    await db.insert(customers).values({
+      tenantId: shop.tenant.id,
+      name: 'Bob Marley',
+      email: 'bob@reggae.test',
+      source: 'office',
+    })
+    const search = (q: string) => getAs(shop, `/api/customers?q=${encodeURIComponent(q)}`)
+
+    expect(names(await search('lopez'))).toEqual(['Maria Lopez'])
+    expect(names(await search('palm st'))).toEqual(['Maria Lopez'])
+    expect(names(await search('reggae'))).toEqual(['Bob Marley'])
+    expect(names(await search('(602) 555-01'))).toEqual(['Maria Lopez'])
+    expect(names(await search('zzz'))).toEqual([])
+  })
+
+  it('sorts newest first when asked, and falls back to names for anything else', async () => {
+    const shop = await createShop('desert')
+    await db
+      .insert(customers)
+      .values({ tenantId: shop.tenant.id, name: 'Zed Young', source: 'office' })
+
+    expect(names(await getAs(shop, '/api/customers?sort=newest'))).toEqual([
+      'Zed Young',
+      'Maria Lopez',
     ])
+    expect(names(await getAs(shop, '/api/customers?sort=bogus&page=0'))).toEqual([
+      'Maria Lopez',
+      'Zed Young',
+    ])
+  })
 
-    const byPhone = await request(app)
-      .get('/api/customers?q=(602) 555-01')
-      .set('Cookie', shop.cookie)
-      .expect(200)
-    expect(byPhone.body.customers.map((c: { name: string }) => c.name)).toEqual(['Maria Lopez'])
+  it('pages 25 at a time and counts every customer', async () => {
+    const shop = await createShop('desert')
+    await db.insert(customers).values(
+      Array.from({ length: 25 }, (_, i) => ({
+        tenantId: shop.tenant.id,
+        name: `Test ${String(i).padStart(2, '0')}`,
+        source: 'office' as const,
+      })),
+    )
+
+    const first = await getAs(shop, '/api/customers')
+    expect(first.body.customers).toHaveLength(25)
+    expect(first.body.total).toBe(26)
+    expect(names(await getAs(shop, '/api/customers?page=2'))).toEqual(['Test 24'])
+  })
+
+  it('shows the next upcoming visit and the last finished one', async () => {
+    const shop = await createShop('desert')
+    await createJob(shop, { at: `${WEDNESDAY} 08:00` }) // booked, still to come
+    await createJob(shop, { at: `${TUESDAY} 08:00`, status: 'cancelled' }) // not a visit
+    await createJob(shop, { at: '2020-01-07 08:00' }) // booked, but its window has passed
+    await createJob(shop, {
+      at: '2020-01-07 12:00',
+      status: 'done',
+      technicianId: shop.mike.id,
+      completedAt: new Date('2020-01-07T21:00:00Z'), // 2 PM in Phoenix
+    })
+
+    const res = await getAs(shop, '/api/customers')
+    expect(res.body.customers[0]).toMatchObject({
+      nextVisitDate: WEDNESDAY,
+      lastVisitDate: '2020-01-07',
+    })
   })
 
   it("never returns another contractor's customers", async () => {
     const shop = await createShop('desert')
     const other = await createShop('other')
-    const res = await request(app)
-      .get('/api/customers?q=maria')
-      .set('Cookie', shop.cookie)
-      .expect(200)
+    const res = await getAs(shop, '/api/customers?q=maria')
     expect(res.body.customers.map((c: { id: string }) => c.id)).toEqual([shop.customer.id])
+    expect(res.body.total).toBe(1)
     expect(JSON.stringify(res.body)).not.toContain(other.customer.id)
-  })
-
-  it('returns nothing until at least 2 characters are typed', async () => {
-    const shop = await createShop('desert')
-    const res = await request(app).get('/api/customers?q=m').set('Cookie', shop.cookie).expect(200)
-    expect(res.body.customers).toEqual([])
   })
 
   it('treats % and _ as plain characters', async () => {
     const shop = await createShop('desert')
-    const res = await request(app)
-      .get('/api/customers?q=%25%25')
-      .set('Cookie', shop.cookie)
-      .expect(200)
+    const res = await getAs(shop, '/api/customers?q=%25%25')
     expect(res.body.customers).toEqual([])
   })
 })

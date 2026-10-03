@@ -18,3 +18,11 @@ export const NewProperty = z.object({
   zip: Zip,
 })
 export type NewProperty = z.infer<typeof NewProperty>
+
+// The customer list's search box, sort and page. Anything odd falls back to the defaults.
+export const CustomerListQuery = z.object({
+  q: z.string().trim().max(100).default(''),
+  sort: z.enum(['name', 'newest']).catch('name'),
+  page: z.coerce.number().int().min(1).catch(1),
+})
+export type CustomerListQuery = z.infer<typeof CustomerListQuery>

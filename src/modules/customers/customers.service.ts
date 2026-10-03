@@ -1,25 +1,32 @@
 import * as queries from './customers.queries.ts'
+import type { CustomerListQuery } from './customers.schemas.ts'
 
-const MIN_QUERY_LENGTH = 2
-const MAX_RESULTS = 10
+// Customers on one page of the list. The web app reads it from the response.
+export const PAGE_SIZE = 25
 
-// Search as the office types: by name, or by 3+ digits of the phone number.
-export async function search(tenantId: string, q: string) {
-  if (q.length < MIN_QUERY_LENGTH) return []
-  const digits = q.replace(/\D/g, '')
-  const found = await queries.searchCustomers(
-    tenantId,
-    { name: q, phoneDigits: digits.length >= 3 ? digits : null },
-    MAX_RESULTS,
-  )
+// One page of the customer list, with every customer's addresses and visit dates.
+export async function list(tenantId: string, query: CustomerListQuery) {
+  const { rows, total } = await queries.listCustomers(tenantId, query, PAGE_SIZE)
   const properties = await queries.listProperties(
     tenantId,
-    found.map((customer) => customer.id),
+    rows.map((customer) => customer.id),
   )
-  return found.map((customer) => ({
-    ...customer,
-    properties: properties
-      .filter((property) => property.customerId === customer.id)
-      .map(({ customerId: _, ...property }) => property),
-  }))
+  return {
+    customers: rows.map((customer) => ({
+      ...customer,
+      properties: addressesOf(customer.id, properties),
+    })),
+    total,
+    pageSize: PAGE_SIZE,
+  }
+}
+
+// One customer's addresses out of several customers' addresses, without the customer id.
+function addressesOf(
+  customerId: string,
+  properties: Awaited<ReturnType<typeof queries.listProperties>>,
+) {
+  return properties
+    .filter((property) => property.customerId === customerId)
+    .map(({ customerId: _, ...property }) => property)
 }
