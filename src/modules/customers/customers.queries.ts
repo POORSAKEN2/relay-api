@@ -206,7 +206,8 @@ export function countJobHistory(tenantId: string, customerId: string) {
 function matching(q: string) {
   if (q === '') return undefined
   const text = `%${escapeLike(q)}%`
-  const digits = q.replace(/\D/g, '')
+  // A Philippine number typed the local way ('0917 …') is stored as '+63917…': drop the 0.
+  const digits = q.replace(/\D/g, '').replace(/^0/, '')
   return or(
     ilike(customers.name, text),
     ilike(customers.email, text),

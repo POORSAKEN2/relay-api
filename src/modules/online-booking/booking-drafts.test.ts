@@ -147,7 +147,7 @@ describe('POST /api/online-booking/drafts', () => {
     const bad = await call('post', 'drafts')
       .send(draftBody({ phone: '555' }))
       .expect(400)
-    expect(bad.body.error.details.phone).toEqual(['Enter a 10-digit phone number'])
+    expect(bad.body.error.details.phone).toEqual(['Enter a mobile number, like 0917 123 4567'])
     expect(await db.select().from(bookingDrafts)).toHaveLength(0)
   })
 })

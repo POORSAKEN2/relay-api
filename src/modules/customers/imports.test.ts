@@ -52,7 +52,7 @@ describe('POST /api/customers/imports/check', () => {
       {
         row: 6,
         status: 'invalid',
-        problems: ['Enter the customer’s name', 'Enter a 10-digit phone number'],
+        problems: ['Enter the customer’s name', 'Enter a mobile number, like 0917 123 4567'],
       },
     ])
     expect(res.body.counts).toEqual({ ready: 2, existing: 1, repeated: 1, invalid: 1 })

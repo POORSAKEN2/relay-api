@@ -186,11 +186,11 @@ describe('POST /api/technicians', () => {
     }).expect(400)
     expect(res.body.error.details).toEqual({
       name: ['Enter the technician’s name'],
-      phone: ['Enter a 10-digit phone number'],
+      phone: ['Enter a mobile number, like 0917 123 4567'],
       email: ['Enter a valid email address'],
       address: ['Enter the technician’s address'],
       emergencyContactName: ['Enter an emergency contact name'],
-      emergencyContactPhone: ['Enter a 10-digit phone number'],
+      emergencyContactPhone: ['Enter a mobile number, like 0917 123 4567'],
     })
   })
 
