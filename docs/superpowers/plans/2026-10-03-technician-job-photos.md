@@ -30,7 +30,7 @@
   - Technician card title `Your photos`; office drawer section title `Technician photos`; group titles `Before` and `After`; button `Take or choose a photo`
   - Empty, finished visit: `No photos were taken.`
   - Upload failure (network): `We couldn’t add this photo. Try again.`; remove failure toast: `We couldn’t remove that photo. Try again.`
-  - Alt text `Before photo 1` / `After photo 1` (2, 3 …)
+  - Alt text `Before shot 1` / `After shot 1` (2, 3 …)
 - Schema rules (top of `relay-api/src/db/schema.ts`): tenant tables reference parents by `(tenant_id, x_id)`; fixed value sets are text + a check built from one exported list; no cascades.
 
 ## Files
@@ -625,7 +625,7 @@ export function useAddJobPhoto(jobId: string) {
 export function useRemoveJobPhoto(jobId: string) { /* api.delete(`…/work-photos/${photoId}`, MyJob) */ }
 ```
 
-- [ ] **Step 3: `photoGroups`, with a test**
+- [ ] **Step 3: `photoRules`, with a test**
 
 ```ts
 import type { JobStatus } from '@/features/dispatch/api'
@@ -659,7 +659,7 @@ field is additive, so it should in fact pass).
 - Modify: `relay-web/src/features/technician-jobs/job-details.tsx`
 
 **Interfaces:**
-- Consumes: `photoGroups`, `useAddJobPhoto`, `useRemoveJobPhoto`, `shrinkPhoto`, `PhotoError`, `MyJob`.
+- Consumes: `photoRules`, `useAddJobPhoto`, `useRemoveJobPhoto`, `shrinkPhoto`, `PhotoError`, `MyJob`.
 - Produces: `<JobPhotos job={job} workPhotos={workPhotos} />`.
 
 - [ ] **Step 1: The card**
@@ -754,7 +754,7 @@ function PhotoRow({ photos, label }: { photos: JobPhoto[]; label: string }) { �
     {workPhotos.before.length > 0 && (
       <>
         <p className="text-muted-foreground">Before</p>
-        <PhotoRow photos={workPhotos.before} label="Before photo" />
+        <PhotoRow photos={workPhotos.before} label="Before shot" />
       </>
     )}
     {/* the same for After */}

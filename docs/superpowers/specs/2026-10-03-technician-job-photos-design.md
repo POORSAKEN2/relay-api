@@ -1,6 +1,6 @@
 # Technician job photos: before and after shots on the visit
 
-Date: 2026-10-03. Status: draft. Plan: `docs/superpowers/plans/2026-10-03-technician-job-photos.md`.
+Date: 2026-10-03. Status: approved. Plan: `docs/superpowers/plans/2026-10-03-technician-job-photos.md`.
 
 ## Problem
 
@@ -140,7 +140,7 @@ A new card, "Your photos", below the office's notes and above Charges:
   replaced by the API's copy. Files upload one after another, so two uploads never race for the
   last free place. Files past the free places are ignored.
 - Each thumbnail links to the full photo in a new tab (`rel="noreferrer"`) and carries an ✕ to
-  remove it while the visit is in progress. Alt text "Before photo 1", "After photo 1".
+  remove it while the visit is in progress. Alt text "Before shot 1", "After shot 1" (Biome refuses "photo" in alt text).
 - Before the visit starts (`booked`, `en_route`) the card is hidden: nothing to show, nothing to
   add. Once the visit is finished (`done`, `no_access`) the card shows what was taken, read-only,
   and says "No photos were taken." when both groups are empty.
@@ -160,7 +160,7 @@ Which groups the card shows, and whether they take uploads, is one pure function
 A section "Technician photos" between Problem and Charges, hidden when both groups are empty:
 a **Before** row and an **After** row of `size-20` thumbnails, the same markup the homeowner's
 photos already use in the drawer (a link that opens the full photo in a new tab, `rel="noreferrer"`).
-Alt text "Before photo 1", "After photo 1". No upload button and no ✕: the office only looks.
+Alt text "Before shot 1", "After shot 1" (Biome refuses "photo" in alt text). No upload button and no ✕: the office only looks.
 
 ## Testing
 
@@ -178,7 +178,7 @@ Alt text "Before photo 1", "After photo 1". No upload button and no ✕: the off
 - API (`dispatch.test.ts`): `GET /jobs/:jobId` lists both stages with staff urls; the staff image
   route serves the bytes; a photo of another job gets `404`; a technician's session gets `403` on
   the staff route, and a staff session gets `403` on the technician one.
-- Web (`vitest`): `photoGroups` for each status; the moved `fitWithin` test keeps passing.
+- Web (`vitest`): `photoRules` for each status; the moved `fitWithin` test keeps passing.
 - By hand: headless Edge over the DevTools protocol, one job driven to `in_progress`, screenshots
   of the technician card (empty, with before photos, with both groups) at phone width, and of the
   office drawer showing the same photos.
@@ -189,6 +189,6 @@ Alt text "Before photo 1", "After photo 1". No upload button and no ✕: the off
 2. API: shared queries in `dispatch`, technician service, schemas, routes, tests.
 3. API: office job detail and staff image route, tests.
 4. Web: move the photo helper to `lib`.
-5. Web: API schema and hooks, `photoGroups` and its test.
+5. Web: API schema and hooks, `photoRules` and its test.
 6. Web: the "Your photos" card, wired into the job page.
 7. Web: the "Technician photos" section in the office drawer. Screenshots of both sides.
