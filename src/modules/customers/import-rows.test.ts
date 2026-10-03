@@ -38,6 +38,13 @@ describe('readImportRow', () => {
     })
   })
 
+  it('removes extra spaces inside a name', () => {
+    expect(read({ name: 'Maria   de  Lopez', phone: '6025550111' })).toMatchObject({
+      ok: true,
+      value: { customer: { name: 'Maria de Lopez' } },
+    })
+  })
+
   it('reads phones however they were typed or stored', () => {
     for (const phone of ['6025550111', '1-602-555-0111', '+1 (602) 555 0111', '16025550111']) {
       expect(read({ name: 'Maria', phone })).toMatchObject({

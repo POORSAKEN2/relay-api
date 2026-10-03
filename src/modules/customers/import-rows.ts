@@ -39,7 +39,7 @@ export function readImportRow(
   today = new Date(),
 ): RowReading {
   const problems: string[] = []
-  const name = [text(row.name), text(row.lastName)].filter(Boolean).join(' ')
+  const name = [text(row.name), text(row.lastName)].filter(Boolean).join(' ').replace(/\s+/g, ' ')
   const contact = NewCustomer.safeParse({ name, phone: text(row.phone), email: text(row.email) })
   if (!contact.success) problems.push(...messages(contact.error))
   const notes = CustomerNotes.safeParse(text(row.notes))
