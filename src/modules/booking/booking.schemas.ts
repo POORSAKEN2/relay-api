@@ -1,20 +1,7 @@
 import { z } from 'zod'
 import { SYSTEM_TYPES } from '../../db/schema.ts'
-import { LocalDate, OptionalEmail, UsPhone, UsState, Zip } from '../../lib/fields.ts'
-
-const NewCustomer = z.object({
-  name: z.string().trim().min(1, 'Enter the customer’s name').max(200),
-  phone: UsPhone,
-  email: OptionalEmail,
-})
-
-const NewProperty = z.object({
-  street: z.string().trim().min(1, 'Enter the street address').max(200),
-  unit: z.string().trim().max(50).optional(),
-  city: z.string().trim().min(1, 'Enter the city').max(100),
-  state: UsState,
-  zip: Zip,
-})
+import { LocalDate } from '../../lib/fields.ts'
+import { NewCustomer, NewProperty } from '../customers/customers.schemas.ts'
 
 // The office books a job by phone. The customer and address are either picked from search
 // (customerId, propertyId) or typed in (newCustomer, newProperty).
