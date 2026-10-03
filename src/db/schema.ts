@@ -210,6 +210,11 @@ export const userPhotos = pgTable(
   ],
 )
 
+export const BRANDING_ASSET_KINDS = ['logo', 'favicon'] as const
+export const BRANDING_ASSET_TYPES = ['image/png', 'image/svg+xml'] as const
+export const LOGO_MAX_BYTES = 512 * 1024
+export const FAVICON_MAX_BYTES = 100 * 1024
+
 // Append-only: the newest row per tenant is the current branding.
 export const brandingVersions = pgTable(
   'branding_versions',
