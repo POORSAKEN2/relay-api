@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { PropertyInput } from '../customers/customers.schemas.ts'
 import { JobParams } from '../dispatch/dispatch.schemas.ts'
 
 // How far away the technician is, in minutes. Running late adds a longer choice.
@@ -33,3 +34,6 @@ export const DecisionInput = z.object({
 export const RepairParams = JobParams.extend({
   itemId: z.uuid('That repair isn’t on this job.'),
 })
+
+// The unit's brand and install year, the whole form: a blank box clears that field.
+export const EquipmentInput = PropertyInput.pick({ equipmentBrand: true, equipmentYear: true })
