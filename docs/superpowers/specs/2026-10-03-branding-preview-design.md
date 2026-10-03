@@ -55,8 +55,8 @@ half-typed hex code never breaks the preview. The name and logo come from the sa
 | --- | --- | --- |
 | `BookingHero({ name, logoUrl, onExit? })` in `features/booking/booking-hero.tsx` | The `<header>` of `BookingShell` (logo, "Book with …" heading, intro line, exit button) | `BookingShell` (with `useBranding()` data) and the preview |
 | `SidebarBrand({ name, logoUrl, collapsed })` in `components/sidebar-brand.tsx` | The brand-colored header block of `Sidebar` | `Sidebar` and the preview |
-| `navItemClass({ active, collapsed })` in `components/sidebar.tsx` (exported) | The `NavLink` className function of `Sidebar` | `Sidebar` and the preview's static nav items |
-| `LINKS` (exported from `components/sidebar.tsx`) | `Sidebar` | The preview's nav list |
+| `navItemClass({ active, collapsed })` in `components/sidebar-links.ts` | The `NavLink` className function of `Sidebar` | `Sidebar` and the preview's static nav items |
+| `LINKS`, moved to `components/sidebar-links.ts` | `Sidebar` | The preview's nav list |
 
 `BookingShell` keeps its exact markup and behavior (`Book a visit` while branding loads, the
 exit button only when `onExit` is given). `Sidebar` keeps its collapsed and expanded states.
