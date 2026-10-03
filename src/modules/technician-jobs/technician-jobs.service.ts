@@ -292,3 +292,31 @@ export function decideRepairs(user: SessionUser, jobId: string, decision: 'appro
     charges.decideRepairs(actor, jobId, decision, checkJob),
   )
 }
+
+// A note from the technician: observations, parts used, anything the office should know. It's
+// saved under their name, so the job page and the dispatch drawer show it with the office's.
+export async function addNote(user: SessionUser, jobId: string, body: string) {
+  await findMyJob(user, jobId)
+  const tenantId = tenantOf(user)
+  const date = await db.transaction(async (tx) => {
+    const job = await dispatchQueries.lockJob(tenantId, jobId, tx)
+    // The office may have reassigned the job since the check above.
+    if (!job || job.technicianId !== user.id) throw notYours()
+    const note = await dispatchQueries.insertNote(tenantId, { jobId, authorId: user.id, body }, tx)
+    await audit.insertUserAction(
+      tenantId,
+      {
+        actorUserId: user.id,
+        action: 'job.note_added',
+        entityType: 'job',
+        entityId: jobId,
+        data: { noteId: note.id },
+      },
+      tx,
+    )
+    return job.date
+  })
+  // The dispatch drawer reloads on this event and shows the note.
+  emitToTenant(tenantId, 'job.note_added', { jobId, dates: [date] })
+  return getMyJob(user, jobId)
+}

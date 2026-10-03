@@ -1,7 +1,13 @@
 import { eq } from 'drizzle-orm'
 import request from 'supertest'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createJob, createShop, resetDb, signInTechnician } from '../../../test/helpers.ts'
+import {
+  createJob,
+  createShop,
+  createTechnician,
+  resetDb,
+  signInTechnician,
+} from '../../../test/helpers.ts'
 import { createApp } from '../../app.ts'
 import { db } from '../../db/client.ts'
 import { auditEvents, customers, jobNotes, jobs, messages } from '../../db/schema.ts'
@@ -215,5 +221,43 @@ describe('who can tap', () => {
     }
     await act(shop.cookie, anas.id, 'start').expect(403)
     expect((await savedJob(anas.id)).status).toBe('booked')
+  })
+})
+
+describe('Technician notes', () => {
+  it('saves a note under the technician and answers with the refreshed job', async () => {
+    const { shop, job, cookie } = await mikesJob()
+
+    const res = await act(cookie, job.id, 'notes', { body: '  Replaced the capacitor  ' }).expect(
+      201,
+    )
+
+    expect(res.body.notes).toEqual([
+      expect.objectContaining({ body: 'Replaced the capacitor', authorName: 'Mike' }),
+    ])
+    expect(await db.select().from(jobNotes)).toEqual([
+      expect.objectContaining({
+        jobId: job.id,
+        authorId: shop.mike.id,
+        body: 'Replaced the capacitor',
+      }),
+    ])
+    expect(emitToTenant).toHaveBeenCalledWith(shop.tenant.id, 'job.note_added', {
+      jobId: job.id,
+      dates: [phoenixDay(0)],
+    })
+  })
+
+  it('needs some text', async () => {
+    const { job, cookie } = await mikesJob()
+    const res = await act(cookie, job.id, 'notes', { body: '   ' }).expect(400)
+    expect(res.body.error.details).toEqual({ body: ['Write a note first'] })
+  })
+
+  it('refuses a job that belongs to someone else', async () => {
+    const { shop, job } = await mikesJob()
+    const other = await createTechnician(shop.tenant.id, 'Sam')
+    await act(await signInTechnician(other), job.id, 'notes', { body: 'Hello' }).expect(404)
+    expect(await db.select().from(jobNotes)).toHaveLength(0)
   })
 })
