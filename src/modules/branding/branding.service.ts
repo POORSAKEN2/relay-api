@@ -162,6 +162,60 @@ export async function removeAsset(
   return getBranding(tenant)
 }
 
+export const HISTORY_LIMIT = 20
+
+export async function listVersions(tenantId: string) {
+  await findTenantOr404(tenantId)
+  const rows = await queries.listVersions(tenantId, HISTORY_LIMIT)
+  return rows.map((row, index) => ({
+    id: row.id,
+    primaryColor: row.primaryColor,
+    accentColor: row.accentColor,
+    logoUrl: assetPath(row.logoAssetId),
+    faviconUrl: assetPath(row.faviconAssetId),
+    createdAt: row.createdAt.toISOString(),
+    createdByName: row.createdByName,
+    current: index === 0,
+  }))
+}
+
+// History only grows: restoring saves a new version with the old one's colors and images.
+export async function restoreVersion(
+  tenantId: string,
+  versionId: string,
+  userId: string,
+): Promise<Branding> {
+  const tenant = await findTenantOr404(tenantId)
+  const version = await queries.findVersion(tenantId, versionId)
+  if (!version) throw new HttpError(404, 'not_found', 'Branding version not found')
+  await db.transaction(async (tx) => {
+    await queries.insertBranding(
+      tenantId,
+      {
+        primaryColor: version.primaryColor,
+        accentColor: version.accentColor,
+        logoAssetId: version.logoAssetId,
+        faviconAssetId: version.faviconAssetId,
+        createdBy: userId,
+      },
+      tx,
+    )
+    await audit.insertUserAction(
+      tenantId,
+      {
+        actorUserId: userId,
+        action: 'branding.restored',
+        entityType: 'tenant',
+        entityId: tenantId,
+        data: { versionId },
+      },
+      tx,
+    )
+  })
+  emitToTenant(tenantId, 'branding.updated', { tenantId })
+  return getBranding(tenant)
+}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export async function getAsset(assetId: string) {

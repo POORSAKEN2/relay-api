@@ -2,7 +2,7 @@ import express, { type Response, Router } from 'express'
 import { BRANDING_ASSET_KINDS } from '../../db/schema.ts'
 import { requireRole } from '../../middleware/auth.ts'
 import { tenantFromHost } from '../../middleware/tenant.ts'
-import { BrandingInput, TenantParams } from './branding.schemas.ts'
+import { BrandingInput, TenantParams, VersionParams } from './branding.schemas.ts'
 import * as branding from './branding.service.ts'
 
 export const brandingRoutes = Router()
@@ -27,6 +27,24 @@ brandingRoutes.put(
     const { tenantId } = TenantParams.parse(req.params)
     const input = BrandingInput.parse(req.body)
     res.json(await branding.updateBranding(tenantId, input, req.user!.id))
+  },
+)
+
+brandingRoutes.get(
+  '/admin/tenants/:tenantId/branding/versions',
+  requireRole('superadmin'),
+  async (req, res) => {
+    const { tenantId } = TenantParams.parse(req.params)
+    res.json({ versions: await branding.listVersions(tenantId) })
+  },
+)
+
+brandingRoutes.post(
+  '/admin/tenants/:tenantId/branding/versions/:versionId/restore',
+  requireRole('superadmin'),
+  async (req, res) => {
+    const { tenantId, versionId } = VersionParams.parse(req.params)
+    res.json(await branding.restoreVersion(tenantId, versionId, req.user!.id))
   },
 )
 

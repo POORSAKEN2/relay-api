@@ -1,4 +1,4 @@
-import { desc, eq } from 'drizzle-orm'
+import { and, desc, eq } from 'drizzle-orm'
 import { type Db, db } from '../../db/client.ts'
 import {
   type BrandingVersion,
@@ -6,6 +6,7 @@ import {
   brandingVersions,
   type Tenant,
   tenants,
+  users,
 } from '../../db/schema.ts'
 
 export type TenantHost = { slug: string } | { customDomain: string }
@@ -64,4 +65,34 @@ export async function findAsset(id: string) {
     .where(eq(brandingAssets.id, id))
     .limit(1)
   return asset
+}
+
+export async function listVersions(tenantId: string, limit: number) {
+  return db
+    .select({
+      id: brandingVersions.id,
+      primaryColor: brandingVersions.primaryColor,
+      accentColor: brandingVersions.accentColor,
+      logoAssetId: brandingVersions.logoAssetId,
+      faviconAssetId: brandingVersions.faviconAssetId,
+      createdAt: brandingVersions.createdAt,
+      createdByName: users.name,
+    })
+    .from(brandingVersions)
+    .innerJoin(users, eq(users.id, brandingVersions.createdBy))
+    .where(eq(brandingVersions.tenantId, tenantId))
+    .orderBy(desc(brandingVersions.createdAt))
+    .limit(limit)
+}
+
+export async function findVersion(
+  tenantId: string,
+  versionId: string,
+): Promise<BrandingVersion | undefined> {
+  const [version] = await db
+    .select()
+    .from(brandingVersions)
+    .where(and(eq(brandingVersions.tenantId, tenantId), eq(brandingVersions.id, versionId)))
+    .limit(1)
+  return version
 }
