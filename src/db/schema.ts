@@ -389,6 +389,39 @@ export const arrivalWindows = pgTable(
 // How the record was first created.
 export const CUSTOMER_SOURCES = ['booking', 'call', 'office', 'import'] as const
 
+// One row per spreadsheet the office imported, so imports can be listed and undone.
+export const customerImports = pgTable(
+  'customer_imports',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: tenantId(),
+    createdBy: uuid('created_by').notNull(),
+    fileName: text('file_name').notNull(),
+    createdCount: integer('created_count').notNull(),
+    skippedCount: integer('skipped_count').notNull(), // already in Relay, repeated or invalid
+    keptCount: integer('kept_count'), // set by undo: customers kept because they have history
+    createdAt: createdAt(),
+    undoneAt: timestamptz('undone_at'),
+  },
+  (t) => [
+    unique().on(t.tenantId, t.id),
+    foreignKey({
+      name: 'customer_imports_created_by_fk',
+      columns: [t.tenantId, t.createdBy],
+      foreignColumns: [users.tenantId, users.id],
+    }),
+    check(
+      'customer_imports_counts_not_negative',
+      sql`${t.createdCount} >= 0 and ${t.skippedCount} >= 0 and (${t.keptCount} is null or ${t.keptCount} >= 0)`,
+    ),
+    check(
+      'customer_imports_undo_complete',
+      sql`(${t.undoneAt} is null) = (${t.keptCount} is null)`,
+    ),
+    index('customer_imports_tenant_created_idx').on(t.tenantId, t.createdAt.desc()),
+  ],
+)
+
 export const customers = pgTable(
   'customers',
   {
@@ -399,6 +432,7 @@ export const customers = pgTable(
     email: text('email'),
     notes: text('notes'),
     source: text('source', { enum: CUSTOMER_SOURCES }).notNull(),
+    importId: uuid('import_id'), // the spreadsheet import that added it; null otherwise
     createdAt: createdAt(),
   },
   (t) => [
@@ -406,6 +440,13 @@ export const customers = pgTable(
     check('customers_phone_e164', e164(t.phone)),
     check('customers_email_lowercase', sql`${t.email} = lower(${t.email})`),
     check('customers_source_valid', oneOf(t.source, CUSTOMER_SOURCES)),
+    foreignKey({
+      name: 'customers_import_fk',
+      columns: [t.tenantId, t.importId],
+      foreignColumns: [customerImports.tenantId, customerImports.id],
+    }),
+    check('customers_import_has_source', sql`${t.importId} is null or ${t.source} = 'import'`),
+    index('customers_tenant_import_idx').on(t.tenantId, t.importId),
     // Not unique: spreadsheet imports and shared household phones can repeat.
     index('customers_tenant_phone_idx').on(t.tenantId, t.phone),
   ],

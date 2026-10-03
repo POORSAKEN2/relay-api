@@ -43,6 +43,9 @@ function optionalText(max: number, message: string) {
   return z.preprocess(blankToNull, z.string().trim().max(max, message).nullish())
 }
 
+// A customer's notes. A blank box saves as nothing.
+export const CustomerNotes = optionalText(2000, 'Keep the notes under 2,000 characters')
+
 // Changing a customer: the contact dialog sends name, phone and email; the notes card sends
 // notes. A blank email or notes box clears it.
 export const CustomerChanges = z
@@ -50,7 +53,7 @@ export const CustomerChanges = z
     name: NewCustomer.shape.name.optional(),
     phone: UsPhone.optional(),
     email: z.preprocess(blankToNull, Email.nullish()),
-    notes: optionalText(2000, 'Keep the notes under 2,000 characters'),
+    notes: CustomerNotes,
   })
   .refine(
     (changes) => Object.values(changes).some((value) => value !== undefined),
