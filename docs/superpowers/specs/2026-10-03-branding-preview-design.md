@@ -15,10 +15,10 @@ found late, and every trial save adds a branding version to the history.
 
 ## Goal
 
-1. Under the color pickers, a **Preview** section shows the contractor's **booking page** and
-   **staff dashboard** in the colors being edited.
-2. It updates immediately on every change to the draft colors: typing a hex code, moving a
-   picker, using a suggested shade, "Generate palette", or a restore. Nothing has to be saved.
+1. A **Preview** button below the Favicon row opens a large modal showing the contractor's
+   **booking page** and **staff dashboard** in the colors being edited.
+2. It always shows the current draft colors: typing a hex code, moving a picker, using a
+   suggested shade, "Generate palette", or a restore. Nothing has to be saved.
 3. The preview is built from the same components as the real pages, so it can't drift from
    them, and it changes nothing else on the admin page.
 
@@ -29,7 +29,7 @@ found late, and every trial save adds a branding version to the history.
   task #9 for email), so the preview shows the real design, not a guess.
 - Previewing a logo or favicon before uploading. Uploads save immediately; the preview shows
   the saved logo.
-- Dark mode, a phone-size toggle, and a full-page or pop-out preview.
+- Dark mode, a phone-size toggle, and a full-page preview.
 - Previewing the favicon (it only shows in a browser tab).
 
 ## How the preview gets the draft colors
@@ -48,6 +48,10 @@ everything inside it and nothing outside it.
 
 The draft colors are the form's last valid colors (the values the pickers show), so a
 half-typed hex code never breaks the preview. The name and logo come from the saved branding.
+Because the Preview button sits outside the color form, `BrandingForm` reports its draft colors
+through an optional `onDraftChange(colors)` prop (called when either color changes, including on
+mount). The contractor's card keeps them and passes them to the preview, falling back to the
+saved colors.
 
 ## Shared pieces (refactor, no visible change to the real pages)
 
@@ -64,18 +68,20 @@ exit button only when `onExit` is given). `Sidebar` keeps its collapsed and expa
 same way. Existing presentational pieces are reused as they are: `Panel`, `ChoiceCard` and
 `BookingProgress` from the booking wizard, `JobCard` from the dispatch board, and `Button`.
 
-## The Preview section (`features/branding/branding-preview.tsx`)
+## The Preview modal (`features/branding/branding-preview.tsx`)
 
-`BrandingPreview({ colors, name, logoUrl })`, rendered by `BrandingForm` directly under the
-fields row and the contrast warning (before the save messages and buttons), so it sits next to
-the pickers it reflects.
+(First built inline under the pickers; changed to a modal at the user's request after review.)
 
-- Heading "Preview" (same `Label` style as the other card sections) and two tabs, "Booking
-  page" and "Dashboard". Booking page is shown first. The tabs are plain buttons with
-  `aria-pressed` (no new UI dependency).
-- A bordered, rounded frame with a light page background (`bg-muted/40`), fixed width up to the
-  card's width (`max-w-2xl`, `overflow-hidden`). The draft-color variables are set on this
-  frame.
+- On the contractor's card, between the Logo/Favicon rows and History: an outline "Preview"
+  button with an eye icon and the hint "See the booking page and dashboard in these colors."
+- It opens a large modal (the existing `Dialog`): up to `sm:max-w-5xl` wide and `90dvh` high,
+  scrolling inside; full width minus 2rem on phones. Title "Preview: <name>", with the two tabs,
+  "Booking page" and "Dashboard", in the header. Booking page is shown each time it opens. The
+  tabs are plain buttons with `aria-pressed` (no new UI dependency). It closes with the X,
+  Escape or a click outside.
+- In the modal body, a bordered, rounded frame with a light page background (`bg-muted/40`,
+  `overflow-hidden`) filling the modal's width, not height-clipped. The draft-color variables
+  are set on this frame (the dialog renders in a portal, so they must not be set on the card).
 - The frame has `role="img"` and `aria-label="Preview of <name>’s <surface>"`, so screen readers
   hear one description instead of sample content. An inner wrapper inside it is `inert`, so the
   fake buttons can't be focused or clicked. (`inert` must not sit on the labelled element itself:
@@ -113,8 +119,9 @@ Sample content lives in `features/branding/preview-samples.ts` and satisfies the
 - relay-web has no component tests, so the refactor and the preview are checked with
   typecheck, lint, the existing suite, and a manual run:
   - the real booking page and staff sidebar look exactly as before (both sidebar states);
-  - on the admin card, typing a hex code, moving a picker, using a suggested shade,
-    "Generate palette" and a restore each recolor the preview at once, and nothing outside the
-    preview frame changes color;
+  - the Preview button sits below the Favicon row; after typing a hex code, moving a picker,
+    using a suggested shade, "Generate palette" or a restore (without saving), the modal shows
+    those colors, and nothing outside the preview frame changes color;
+  - both tabs are fully visible in the modal; Escape, the X and a click outside close it;
   - the Dashboard tab shows the logo or name in the sidebar header and "Dispatch" highlighted;
-  - Tab cannot move focus into the preview.
+  - Tab cannot move focus into the preview frame.
