@@ -1,4 +1,4 @@
-import { asc, desc, eq } from 'drizzle-orm'
+import { desc, eq } from 'drizzle-orm'
 import { db } from '../../db/client.ts'
 import { type BrandingVersion, brandingVersions, type Tenant, tenants } from '../../db/schema.ts'
 
@@ -16,13 +16,6 @@ export async function findTenantByHost(host: TenantHost): Promise<Tenant | undef
 export async function findTenantById(id: string): Promise<Tenant | undefined> {
   const [tenant] = await db.select().from(tenants).where(eq(tenants.id, id)).limit(1)
   return tenant
-}
-
-export function listTenants() {
-  return db
-    .select({ id: tenants.id, slug: tenants.slug, name: tenants.name })
-    .from(tenants)
-    .orderBy(asc(tenants.name))
 }
 
 // Tenant-scoped: every query below takes tenantId first.

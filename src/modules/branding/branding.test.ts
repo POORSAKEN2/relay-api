@@ -139,17 +139,3 @@ describe('GET /api/admin/tenants/:tenantId/branding', () => {
       .expect(403)
   })
 })
-
-describe('GET /api/admin/tenants', () => {
-  it('lists contractors by name for a superadmin', async () => {
-    await createTenant('desert')
-    await createTenant('other')
-    const admin = await createUser('superadmin', null)
-
-    const res = await request(app)
-      .get('/api/admin/tenants')
-      .set('Cookie', await signIn(admin.email))
-      .expect(200)
-    expect(res.body.tenants.map((t: { slug: string }) => t.slug)).toEqual(['desert', 'other'])
-  })
-})

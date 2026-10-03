@@ -50,10 +50,6 @@ export async function updateBranding(
   return getBranding(tenant)
 }
 
-export function listTenants() {
-  return queries.listTenants()
-}
-
 async function findTenantOr404(tenantId: string): Promise<Tenant> {
   const tenant = await queries.findTenantById(tenantId)
   if (!tenant) throw new HttpError(404, 'not_found', 'Contractor not found')

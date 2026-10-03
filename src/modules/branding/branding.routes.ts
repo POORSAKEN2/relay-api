@@ -10,10 +10,6 @@ brandingRoutes.get('/branding', tenantFromHost, async (req, res) => {
   res.json(await branding.getBranding(req.tenant!))
 })
 
-brandingRoutes.get('/admin/tenants', requireRole('superadmin'), async (_req, res) => {
-  res.json({ tenants: await branding.listTenants() })
-})
-
 brandingRoutes.get(
   '/admin/tenants/:tenantId/branding',
   requireRole('superadmin'),

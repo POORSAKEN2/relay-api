@@ -17,6 +17,7 @@ import { onlineBookingRoutes } from './modules/online-booking/online-booking.rou
 import { settingsRoutes } from './modules/settings/settings.routes.ts'
 import { teamRoutes } from './modules/team/team.routes.ts'
 import { technicianJobsRoutes } from './modules/technician-jobs/technician-jobs.routes.ts'
+import { tenantsRoutes } from './modules/tenants/tenants.routes.ts'
 
 export function createApp() {
   const app = express()
@@ -52,6 +53,7 @@ export function createApp() {
     settingsRoutes,
     teamRoutes,
     technicianJobsRoutes,
+    tenantsRoutes,
   )
 
   app.use((_req, res) => {
