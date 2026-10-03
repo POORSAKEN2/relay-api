@@ -281,3 +281,153 @@ describe('GET /api/customers/:customerId', () => {
     expect(res.body.error).toEqual({ code: 'not_found', message: 'That customer wasn’t found.' })
   })
 })
+
+describe('PATCH /api/customers/:customerId', () => {
+  function patchAs(shop: Shop, customerId: string, body: object) {
+    return request(app).patch(`/api/customers/${customerId}`).set('Cookie', shop.cookie).send(body)
+  }
+
+  it('changes the contact and leaves the notes alone', async () => {
+    const shop = await createShop('desert')
+    await db
+      .update(customers)
+      .set({ notes: 'Pays by check' })
+      .where(eq(customers.id, shop.customer.id))
+
+    const res = await patchAs(shop, shop.customer.id, {
+      name: 'Maria L. Lopez',
+      phone: '(480) 555-0199',
+      email: 'Maria@Example.com',
+    }).expect(200)
+    expect(res.body.customer).toMatchObject({
+      name: 'Maria L. Lopez',
+      phone: '+14805550199',
+      email: 'maria@example.com',
+      notes: 'Pays by check',
+    })
+  })
+
+  it('saves notes on their own, and a blank box clears them and the email', async () => {
+    const shop = await createShop('desert')
+    const saved = await patchAs(shop, shop.customer.id, {
+      notes: 'Prefers mornings\nDog in yard',
+    }).expect(200)
+    expect(saved.body.customer).toMatchObject({
+      notes: 'Prefers mornings\nDog in yard',
+      phone: '+16025550111',
+    })
+
+    const cleared = await patchAs(shop, shop.customer.id, { notes: '   ', email: '' }).expect(200)
+    expect(cleared.body.customer).toMatchObject({ notes: null, email: null })
+  })
+
+  it('refuses long notes, a bad email and an empty change', async () => {
+    const shop = await createShop('desert')
+    const long = await patchAs(shop, shop.customer.id, { notes: 'x'.repeat(2001) }).expect(400)
+    expect(long.body.error.details.notes).toEqual(['Keep the notes under 2,000 characters'])
+    const email = await patchAs(shop, shop.customer.id, { email: 'not-an-email' }).expect(400)
+    expect(email.body.error.details.email).toEqual(['Enter a valid email address'])
+    await patchAs(shop, shop.customer.id, {}).expect(400)
+  })
+
+  it("can't change another contractor's customer", async () => {
+    const shop = await createShop('desert')
+    const other = await createShop('other')
+    await patchAs(shop, other.customer.id, { notes: 'hi' }).expect(404)
+  })
+})
+
+describe('customer addresses', () => {
+  const address = { street: '12 Palm St', city: 'Phoenix', state: 'AZ', zip: '85004' }
+
+  function putAs(shop: Shop, customerId: string, propertyId: string, body: object) {
+    return request(app)
+      .put(`/api/customers/${customerId}/properties/${propertyId}`)
+      .set('Cookie', shop.cookie)
+      .send(body)
+  }
+
+  it('adds an address with its equipment', async () => {
+    const shop = await createShop('desert')
+    const res = await request(app)
+      .post(`/api/customers/${shop.customer.id}/properties`)
+      .set('Cookie', shop.cookie)
+      .send({
+        street: '88 W Main St',
+        unit: '',
+        city: 'Mesa',
+        state: 'AZ',
+        zip: '85201',
+        equipmentBrand: 'Trane',
+        equipmentYear: 2016,
+        notes: 'Side gate',
+      })
+      .expect(201)
+    expect(res.body.property).toEqual({
+      id: expect.any(String),
+      street: '88 W Main St',
+      unit: null,
+      city: 'Mesa',
+      state: 'AZ',
+      zip: '85201',
+      equipmentBrand: 'Trane',
+      equipmentYear: 2016,
+      notes: 'Side gate',
+    })
+  })
+
+  it('replaces an address, clearing what the form left empty', async () => {
+    const shop = await createShop('desert')
+    await db
+      .update(properties)
+      .set({ unit: '4', equipmentBrand: 'Carrier', equipmentYear: 2014, notes: 'Gate 4411' })
+      .where(eq(properties.id, shop.property.id))
+
+    const res = await putAs(shop, shop.customer.id, shop.property.id, {
+      ...address,
+      street: '12 Palm Street',
+      equipmentBrand: '',
+      equipmentYear: null,
+      notes: '',
+    }).expect(200)
+    expect(res.body.property).toEqual({
+      id: shop.property.id,
+      street: '12 Palm Street',
+      unit: null,
+      city: 'Phoenix',
+      state: 'AZ',
+      zip: '85004',
+      equipmentBrand: null,
+      equipmentYear: null,
+      notes: null,
+    })
+  })
+
+  it('refuses an install year before 1950, in the future or not whole', async () => {
+    const shop = await createShop('desert')
+    for (const equipmentYear of [1949, new Date().getFullYear() + 1, 2000.5]) {
+      const res = await putAs(shop, shop.customer.id, shop.property.id, {
+        ...address,
+        equipmentYear,
+      }).expect(400)
+      expect(res.body.error.details.equipmentYear).toEqual(['Check the equipment age'])
+    }
+  })
+
+  it("won't touch another customer's address or another contractor's customer", async () => {
+    const shop = await createShop('desert')
+    const other = await createShop('other')
+    const [bob] = await db
+      .insert(customers)
+      .values({ tenantId: shop.tenant.id, name: 'Bob Marley', source: 'office' })
+      .returning()
+
+    const res = await putAs(shop, bob.id, shop.property.id, address).expect(404)
+    expect(res.body.error.message).toBe('That address wasn’t found for this customer.')
+    await request(app)
+      .post(`/api/customers/${other.customer.id}/properties`)
+      .set('Cookie', shop.cookie)
+      .send(address)
+      .expect(404)
+  })
+})

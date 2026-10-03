@@ -229,3 +229,38 @@ function matching(q: string) {
 function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (char) => `\\${char}`)
 }
+
+// Fields left undefined are not changed.
+export async function updateCustomer(
+  tenantId: string,
+  customerId: string,
+  changes: Partial<Pick<typeof customers.$inferInsert, 'name' | 'phone' | 'email' | 'notes'>>,
+) {
+  const [customer] = await db
+    .update(customers)
+    .set(changes)
+    .where(and(eq(customers.tenantId, tenantId), eq(customers.id, customerId)))
+    .returning()
+  return customer
+}
+
+// Only this customer's address: another customer's address id changes nothing.
+export async function updateProperty(
+  tenantId: string,
+  customerId: string,
+  propertyId: string,
+  values: Omit<typeof properties.$inferInsert, 'tenantId' | 'customerId'>,
+) {
+  const [property] = await db
+    .update(properties)
+    .set(values)
+    .where(
+      and(
+        eq(properties.tenantId, tenantId),
+        eq(properties.customerId, customerId),
+        eq(properties.id, propertyId),
+      ),
+    )
+    .returning()
+  return property
+}

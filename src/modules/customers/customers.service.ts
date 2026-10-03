@@ -1,9 +1,15 @@
 import { db } from '../../db/client.ts'
-import type { customers } from '../../db/schema.ts'
+import type { customers, properties } from '../../db/schema.ts'
 import { HttpError } from '../../lib/http-error.ts'
 import { formatDate, formatWindow } from '../../lib/labels.ts'
 import * as queries from './customers.queries.ts'
-import type { CustomerListQuery, NewCustomerInput, NewProperty } from './customers.schemas.ts'
+import type {
+  CustomerChanges,
+  CustomerListQuery,
+  NewCustomerInput,
+  NewProperty,
+  PropertyInput,
+} from './customers.schemas.ts'
 
 // Customers on one page of the list. The web app reads it from the response.
 export const PAGE_SIZE = 25
@@ -11,6 +17,7 @@ export const PAGE_SIZE = 25
 // The record page shows this many jobs; `jobsTotal` says how many there are in all.
 const HISTORY_LIMIT = 100
 const CUSTOMER_NOT_FOUND = 'That customer wasn’t found.'
+const PROPERTY_NOT_FOUND = 'That address wasn’t found for this customer.'
 
 // One page of the customer list, with every customer's addresses and visit dates.
 export async function list(tenantId: string, query: CustomerListQuery) {
@@ -103,4 +110,48 @@ export async function detail(tenantId: string, customerId: string) {
 // What the web app sees of a customer: everything but the tenant id.
 function toCustomer({ tenantId: _, ...customer }: typeof customers.$inferSelect) {
   return customer
+}
+
+// Changes the contact (name, phone, email) or the notes. Fields not sent stay as they are.
+export async function update(tenantId: string, customerId: string, changes: CustomerChanges) {
+  const customer = await queries.updateCustomer(tenantId, customerId, changes)
+  if (!customer) throw new HttpError(404, 'not_found', CUSTOMER_NOT_FOUND)
+  return { customer: toCustomer(customer) }
+}
+
+export async function addProperty(tenantId: string, customerId: string, input: PropertyInput) {
+  if (!(await queries.findCustomer(tenantId, customerId))) {
+    throw new HttpError(404, 'not_found', CUSTOMER_NOT_FOUND)
+  }
+  const property = await queries.insertProperty(tenantId, {
+    ...propertyValues(input),
+    customerId,
+  })
+  return { property: toProperty(property) }
+}
+
+export async function replaceProperty(
+  tenantId: string,
+  customerId: string,
+  propertyId: string,
+  input: PropertyInput,
+) {
+  const property = await queries.updateProperty(
+    tenantId,
+    customerId,
+    propertyId,
+    propertyValues(input),
+  )
+  if (!property) throw new HttpError(404, 'not_found', PROPERTY_NOT_FOUND)
+  return { property: toProperty(property) }
+}
+
+// What the web app sees of an address: no tenant, customer or creation time.
+function toProperty({
+  tenantId: _tenant,
+  customerId: _customer,
+  createdAt: _created,
+  ...property
+}: typeof properties.$inferSelect) {
+  return property
 }
