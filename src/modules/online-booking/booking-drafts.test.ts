@@ -239,6 +239,16 @@ async function insertDraft(
     createdAt: minutesAgo(120),
     ...overrides,
   })
+  // Ticking the box on the contact step also records the consent, as saveDraftContact does.
+  if (overrides.smsConsent !== false) {
+    await db.insert(consentEvents).values({
+      tenantId: shop.tenant.id,
+      contact: overrides.phone ?? '+14805550199',
+      channel: 'sms',
+      granted: true,
+      source: 'booking_form',
+    })
+  }
 }
 
 describe('sendRecoveryTexts', () => {

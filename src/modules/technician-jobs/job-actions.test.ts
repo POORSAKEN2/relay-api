@@ -10,7 +10,15 @@ import {
 } from '../../../test/helpers.ts'
 import { createApp } from '../../app.ts'
 import { db } from '../../db/client.ts'
-import { auditEvents, customers, jobNotes, jobs, messages, properties } from '../../db/schema.ts'
+import {
+  auditEvents,
+  consentEvents,
+  customers,
+  jobNotes,
+  jobs,
+  messages,
+  properties,
+} from '../../db/schema.ts'
 import { formatClock } from '../../lib/labels.ts'
 import { emitToTenant } from '../../realtime/index.ts'
 import { onMyWayText, runningLateText } from './texts.ts'
@@ -57,6 +65,14 @@ async function savedJob(jobId: string) {
 describe('On my way', () => {
   it('marks the job en route with an arrival time and texts the homeowner', async () => {
     const { shop, job, cookie } = await mikesJob()
+    // She agreed to texts when the office booked her; without it the text is blocked.
+    await db.insert(consentEvents).values({
+      tenantId: shop.tenant.id,
+      contact: '+16025550111',
+      channel: 'sms',
+      granted: true,
+      source: 'office',
+    })
     const before = Date.now()
 
     const res = await act(cookie, job.id, 'on-my-way', { minutes: 15 }).expect(200)

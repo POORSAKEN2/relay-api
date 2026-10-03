@@ -53,7 +53,7 @@ describe('POST /api/auth/phone/code', () => {
       tenantId: tenant.id,
       channel: 'sms',
       direction: 'outbound',
-      status: 'queued',
+      status: 'sent', // sent at once, not by the loop; tests only log it
       kind: 'sign_in_code',
       contact: tech.phone,
       toUserId: tech.id,
