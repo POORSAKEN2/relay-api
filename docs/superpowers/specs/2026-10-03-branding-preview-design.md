@@ -60,7 +60,8 @@ half-typed hex code never breaks the preview. The name and logo come from the sa
 
 `BookingShell` keeps its exact markup and behavior (`Book a visit` while branding loads, the
 exit button only when `onExit` is given). `Sidebar` keeps its collapsed and expanded states.
-Existing presentational pieces are reused as they are: `Panel`, `ChoiceCard` and
+`PriorityNotice` in `features/booking/priority-notice.tsx` is extracted from `time-step.tsx` the
+same way. Existing presentational pieces are reused as they are: `Panel`, `ChoiceCard` and
 `BookingProgress` from the booking wizard, `JobCard` from the dispatch board, and `Button`.
 
 ## The Preview section (`features/branding/branding-preview.tsx`)
@@ -73,29 +74,31 @@ the pickers it reflects.
   page" and "Dashboard". Booking page is shown first. The tabs are plain buttons with
   `aria-pressed` (no new UI dependency).
 - A bordered, rounded frame with a light page background (`bg-muted/40`), fixed width up to the
-  card's width (`max-w-2xl`), clipped to about 22rem high (`max-h-88 overflow-hidden`). The
-  draft-color variables are set on this frame.
-- The frame is `inert` and has `aria-label="Preview of <name>'s <surface>"` with
-  `role="img"`, so the fake buttons can't be focused or clicked and screen readers hear one
-  description instead of sample content.
+  card's width (`max-w-2xl`, `overflow-hidden`). The draft-color variables are set on this
+  frame.
+- The frame has `role="img"` and `aria-label="Preview of <name>’s <surface>"`, so screen readers
+  hear one description instead of sample content. An inner wrapper inside it is `inert`, so the
+  fake buttons can't be focused or clicked. (`inert` must not sit on the labelled element itself:
+  it removes that element from the accessibility tree.)
 
 ### Booking page tab
 
 Top to bottom, at the real page's sizes:
 
 1. `BookingHero` with the contractor's name and saved logo, no exit button.
-2. Overlapping the hero's bottom edge (as on the real page): `BookingProgress` on step 2
-   ("Area") so one step shows done, one current and the rest upcoming; then a `Panel` with
-   the question "What do you need?" and three `ChoiceCard`s, "Repair", "Maintenance" (selected)
-   and "New system", and a full-width primary `Button` "Continue".
+2. Overlapping the hero's bottom edge (as on the real page): `BookingProgress` on step 1
+   ("Service", matching the question); then a `Panel` with the question "What do you need?",
+   three `ChoiceCard`s, "Repair", "Maintenance" (selected) and "New system", the
+   `PriorityNotice` (the real page's accent-colored PRIORITY note, so accent changes show), and
+   a full-width primary `Button` "Continue".
 
 ### Dashboard tab
 
 A two-column mock of the staff screen:
 
-1. Left, 14rem wide: `SidebarBrand` (expanded) and the nav list from `LINKS` rendered with
+1. Left, 15rem wide on the page background, like the real staff sidebar: `SidebarBrand` (expanded) and the nav list from `LINKS` rendered with
    `navItemClass`, "Dispatch" active and the others inactive. No user block or sign-out.
-2. Right: the title "Dispatch" (as `StaffPage` shows it), a primary `Button` "Book job", and
+2. Right, on the real content area's `bg-muted/40`: the title "Dispatch" (as `StaffPage` shows it), a primary `Button` "Book job", and
    two `JobCard`s from a fixed sample (`PREVIEW_JOBS`: one scheduled and assigned, one priority
    and unassigned), with a no-op `onOpen`.
 
