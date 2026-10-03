@@ -143,34 +143,7 @@ The API tests run against `relay_test` and set up its tables themselves.
 
 ## Real texts with httpSMS
 
-The demo sends texts from an Android phone with a Philippine SIM, through [httpSMS](https://httpsms.com). Every text goes out from that phone's number. How it works: `docs/superpowers/specs/2026-10-04-sms-service-design.md`.
-
-1. **The phone.** Install the httpSMS app on the Android phone and sign in. Sign in to [httpsms.com](https://httpsms.com) with the same account: the phone shows up there with its number. Keep the phone charged, online, and let the app run in the background.
-2. **The API key.** Copy it from [httpsms.com/settings](https://httpsms.com/settings).
-3. **`.env`** in `relay-api`:
-   ```
-   SMS_PROVIDER=httpsms
-   HTTPSMS_API_KEY=<the key from step 2>
-   HTTPSMS_WEBHOOK_SIGNING_KEY=<any long random string; also used in step 5>
-   SEED_SMS_NUMBER=+639XXXXXXXXX
-   ```
-   `SEED_SMS_NUMBER` is the phone's own number, written as httpSMS shows it.
-4. **The sending number.** `npm run db:seed` (deletes all data first) makes it Desert Breeze Air's number. To keep your data instead, run in pgAdmin:
-   ```sql
-   insert into phone_numbers (tenant_id, number)
-   select id, '+639XXXXXXXXX' from tenants where slug = 'desert';
-   ```
-5. **The webhook** (delivery statuses, replies, STOP, missed calls). httpSMS must reach your API, so open a tunnel: `cloudflared tunnel --url http://localhost:3000` prints an `https://….trycloudflare.com` address. In httpSMS settings, add a webhook with the URL `<that address>/api/webhooks/httpsms`, the signing key from step 3, and every `message.*` and `phone.heartbeat.*` event. A new tunnel gets a new address: update the webhook each time. Sending works without this step.
-6. Restart the API. Every few seconds it sends the texts that are due.
-
-To try it, give a technician your own mobile number in `/technicians` and sign in as them at `/sign-in/phone`.
-
-Good to know:
-
-- Homeowners only get texts they agreed to (the consent box when booking). A reply of `STOP` stops them; `START` lets them through again. Reminders and other unprompted texts wait until quiet hours end (21:00 to 08:00 Manila time by default).
-- Links in texts point at `https://desert.<APP_DOMAIN>/`. A phone can't open `localhost`, so for a demo the web app needs a public address too.
-- Android limits how many texts an app sends in a short time, and httpSMS's free plan has a monthly cap. Fine for a demo, not a load test.
-- A text that won't go: check its row in `messages` (`status`, `attempts`, `last_error`).
+The demo sends texts from an Android phone with a Philippine SIM, through [httpSMS](https://httpsms.com). Step-by-step setup, the rules Relay applies, and what to check when a text doesn't arrive: [docs/httpsms-setup.md](docs/httpsms-setup.md).
 
 ## Scripts
 
