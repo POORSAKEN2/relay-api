@@ -371,3 +371,71 @@ export function decideRepairs(user: SessionUser, jobId: string, decision: 'appro
     charges.decideRepairs(actor, jobId, decision, checkJob),
   )
 }
+
+// A note from the technician: observations, parts used, anything the office should know. It's
+// saved under their name, so the job page and the dispatch drawer show it with the office's.
+export async function addNote(user: SessionUser, jobId: string, body: string) {
+  await findMyJob(user, jobId)
+  const tenantId = tenantOf(user)
+  const date = await db.transaction(async (tx) => {
+    const job = await dispatchQueries.lockJob(tenantId, jobId, tx)
+    // The office may have reassigned the job since the check above.
+    if (!job || job.technicianId !== user.id) throw notYours()
+    const note = await dispatchQueries.insertNote(tenantId, { jobId, authorId: user.id, body }, tx)
+    await audit.insertUserAction(
+      tenantId,
+      {
+        actorUserId: user.id,
+        action: 'job.note_added',
+        entityType: 'job',
+        entityId: jobId,
+        data: { noteId: note.id },
+      },
+      tx,
+    )
+    return job.date
+  })
+  // The dispatch drawer reloads on this event and shows the note.
+  emitToTenant(tenantId, 'job.note_added', { jobId, dates: [date] })
+  return getMyJob(user, jobId)
+}
+
+// The unit's brand and install year, set after diagnosing. It's saved on the address, so the
+// office and the next visit see it too. Only while the visit is in progress.
+export async function setEquipment(
+  user: SessionUser,
+  jobId: string,
+  input: { equipmentBrand?: string | null; equipmentYear?: number | null },
+) {
+  await findMyJob(user, jobId)
+  const tenantId = tenantOf(user)
+  const equipment = {
+    equipmentBrand: input.equipmentBrand ?? null,
+    equipmentYear: input.equipmentYear ?? null,
+  }
+  await db.transaction(async (tx) => {
+    const job = await dispatchQueries.lockJob(tenantId, jobId, tx)
+    // The office may have reassigned the job since the check above.
+    if (!job || job.technicianId !== user.id) throw notYours()
+    if (job.status !== 'in_progress') {
+      throw new HttpError(
+        422,
+        'invalid_transition',
+        `This job is ${statusLabel(job.status)}, so the equipment can’t be changed.`,
+      )
+    }
+    await queries.updateJobEquipment(tenantId, jobId, equipment, tx)
+    await audit.insertUserAction(
+      tenantId,
+      {
+        actorUserId: user.id,
+        action: 'job.equipment_set',
+        entityType: 'job',
+        entityId: jobId,
+        data: equipment,
+      },
+      tx,
+    )
+  })
+  return getMyJob(user, jobId)
+}

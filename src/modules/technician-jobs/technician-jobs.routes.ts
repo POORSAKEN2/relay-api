@@ -1,9 +1,10 @@
 import express, { Router } from 'express'
 import { sendPhoto } from '../../lib/send-photo.ts'
 import { requireRole } from '../../middleware/auth.ts'
-import { JobParams, JobPhotoParams } from '../dispatch/dispatch.schemas.ts'
+import { JobParams, JobPhotoParams, NoteInput } from '../dispatch/dispatch.schemas.ts'
 import {
   DecisionInput,
+  EquipmentInput,
   NoAccessInput,
   OnMyWayInput,
   RepairInput,
@@ -106,4 +107,16 @@ technicianJobsRoutes.post('/my-jobs/:jobId/repairs/decision', technician, async 
   const { jobId } = JobParams.parse(req.params)
   const { decision } = DecisionInput.parse(req.body)
   res.json(await technicianJobs.decideRepairs(req.user!, jobId, decision))
+})
+
+technicianJobsRoutes.post('/my-jobs/:jobId/notes', technician, async (req, res) => {
+  const { jobId } = JobParams.parse(req.params)
+  const { body } = NoteInput.parse(req.body)
+  res.status(201).json(await technicianJobs.addNote(req.user!, jobId, body))
+})
+
+technicianJobsRoutes.patch('/my-jobs/:jobId/equipment', technician, async (req, res) => {
+  const { jobId } = JobParams.parse(req.params)
+  const input = EquipmentInput.parse(req.body)
+  res.json(await technicianJobs.setEquipment(req.user!, jobId, input))
 })

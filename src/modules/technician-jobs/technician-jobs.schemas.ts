@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { PHOTO_STAGES } from '../../db/schema.ts'
+import { PropertyInput } from '../customers/customers.schemas.ts'
 import { JobParams } from '../dispatch/dispatch.schemas.ts'
 
 // How far away the technician is, in minutes. Running late adds a longer choice.
@@ -38,3 +39,6 @@ export const RepairParams = JobParams.extend({
 export const WorkPhotoStageParams = JobParams.extend({
   stage: z.enum(PHOTO_STAGES, 'That photo stage isn’t valid'),
 })
+
+// The unit's brand and install year, the whole form: a blank box clears that field.
+export const EquipmentInput = PropertyInput.pick({ equipmentBrand: true, equipmentYear: true })

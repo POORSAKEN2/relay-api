@@ -92,3 +92,24 @@ export async function findJobContact(tenantId: string, jobId: string, tx: Db) {
   return contact
 }
 export type JobContact = Awaited<ReturnType<typeof findJobContact>>
+
+// Sets the equipment on the job's address.
+export async function updateJobEquipment(
+  tenantId: string,
+  jobId: string,
+  values: { equipmentBrand: string | null; equipmentYear: number | null },
+  tx: Db,
+) {
+  await tx
+    .update(properties)
+    .set(values)
+    .where(
+      and(
+        eq(properties.tenantId, tenantId),
+        eq(
+          properties.id,
+          sql`(select ${jobs.propertyId} from ${jobs} where ${jobs.tenantId} = ${tenantId} and ${jobs.id} = ${jobId})`,
+        ),
+      ),
+    )
+}
