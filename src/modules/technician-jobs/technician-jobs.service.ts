@@ -320,3 +320,43 @@ export async function addNote(user: SessionUser, jobId: string, body: string) {
   emitToTenant(tenantId, 'job.note_added', { jobId, dates: [date] })
   return getMyJob(user, jobId)
 }
+
+// The unit's brand and install year, set after diagnosing. It's saved on the address, so the
+// office and the next visit see it too. Only while the visit is in progress.
+export async function setEquipment(
+  user: SessionUser,
+  jobId: string,
+  input: { equipmentBrand?: string | null; equipmentYear?: number | null },
+) {
+  await findMyJob(user, jobId)
+  const tenantId = tenantOf(user)
+  const equipment = {
+    equipmentBrand: input.equipmentBrand ?? null,
+    equipmentYear: input.equipmentYear ?? null,
+  }
+  await db.transaction(async (tx) => {
+    const job = await dispatchQueries.lockJob(tenantId, jobId, tx)
+    // The office may have reassigned the job since the check above.
+    if (!job || job.technicianId !== user.id) throw notYours()
+    if (job.status !== 'in_progress') {
+      throw new HttpError(
+        422,
+        'invalid_transition',
+        `This job is ${statusLabel(job.status)}, so the equipment can’t be changed.`,
+      )
+    }
+    await queries.updateJobEquipment(tenantId, jobId, equipment, tx)
+    await audit.insertUserAction(
+      tenantId,
+      {
+        actorUserId: user.id,
+        action: 'job.equipment_set',
+        entityType: 'job',
+        entityId: jobId,
+        data: equipment,
+      },
+      tx,
+    )
+  })
+  return getMyJob(user, jobId)
+}
