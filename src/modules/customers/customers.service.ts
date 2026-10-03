@@ -107,8 +107,8 @@ export async function detail(tenantId: string, customerId: string) {
   }
 }
 
-// What the web app sees of a customer: everything but the tenant id.
-function toCustomer({ tenantId: _, ...customer }: typeof customers.$inferSelect) {
+// What the web app sees of a customer: everything but the tenant id and import id.
+function toCustomer({ tenantId: _, importId: __, ...customer }: typeof customers.$inferSelect) {
   return customer
 }
 
