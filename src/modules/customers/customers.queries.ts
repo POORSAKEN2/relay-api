@@ -2,6 +2,7 @@ import { and, asc, desc, eq, exists, ilike, inArray, notInArray, or, sql } from 
 import { type Db, db } from '../../db/client.ts'
 import { customers, jobs, properties, services, tenants, users } from '../../db/schema.ts'
 import { local } from '../dispatch/dispatch.queries.ts'
+import { customerMatchKey } from './customer-match.ts'
 import type { CustomerListQuery } from './customers.schemas.ts'
 
 // Tenant-scoped: every query takes tenantId first.
@@ -14,29 +15,21 @@ export async function findCustomer(tenantId: string, customerId: string, tx: Db 
   return customer
 }
 
-// The customer with this phone number and name; the oldest one when several match. A household
-// can share a phone, so the name tells its people apart. Case and extra spaces in the name
-// don't count: 'maria  LOPEZ' is 'Maria Lopez'.
+// The customer with this phone number and name (customerMatchKey); the oldest one when
+// several match.
 export async function findCustomerByPhoneAndName(
   tenantId: string,
   phone: string,
   name: string,
   tx: Db = db,
 ) {
-  const sameName = name.trim().replace(/\s+/g, ' ').toLowerCase()
-  const [customer] = await tx
+  const samePhone = await tx
     .select()
     .from(customers)
-    .where(
-      and(
-        eq(customers.tenantId, tenantId),
-        eq(customers.phone, phone),
-        sql`lower(regexp_replace(btrim(${customers.name}), '\\s+', ' ', 'g')) = ${sameName}`,
-      ),
-    )
+    .where(and(eq(customers.tenantId, tenantId), eq(customers.phone, phone)))
     .orderBy(asc(customers.createdAt))
-    .limit(1)
-  return customer
+  const key = customerMatchKey(phone, name)
+  return samePhone.find((customer) => customerMatchKey(phone, customer.name) === key)
 }
 
 export async function insertCustomer(
