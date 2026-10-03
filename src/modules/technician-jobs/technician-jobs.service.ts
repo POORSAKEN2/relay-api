@@ -6,7 +6,14 @@ import {
 } from '../../db/schema.ts'
 import { HttpError } from '../../lib/http-error.ts'
 import { photoTypeOf } from '../../lib/image-type.ts'
-import { formatClock, formatDay, formatTime, formatWindow, statusLabel } from '../../lib/labels.ts'
+import {
+  formatClock,
+  formatDate,
+  formatDay,
+  formatTime,
+  formatWindow,
+  statusLabel,
+} from '../../lib/labels.ts'
 import { emitToTenant } from '../../realtime/index.ts'
 import type { SessionUser } from '../accounts/accounts.service.ts'
 import * as audit from '../audit/audit.queries.ts'
@@ -24,6 +31,7 @@ import { noAccessText, onMyWayText, runningLateText } from './texts.ts'
 // "is it yours" check, arrival times, the homeowner's texts and the technician's own photos.
 
 const DAYS_SHOWN = 7 // today and the next 6 days
+const HISTORY_SHOWN = 10 // past visits on the job page
 const NOT_YOURS = 'This job isn’t assigned to you anymore.'
 
 type PhotoStage = (typeof PHOTO_STAGES)[number]
@@ -73,17 +81,38 @@ async function findMyJob(user: SessionUser, jobId: string) {
   return job
 }
 
+// The latest finished visits at this address, each with the repairs the homeowner approved.
+async function listHistory(tenantId: string, jobId: string) {
+  const visits = await queries.listPastVisits(tenantId, jobId, HISTORY_SHOWN)
+  const repairs = await queries.listApprovedRepairs(
+    tenantId,
+    visits.map((visit) => visit.id),
+  )
+  return visits.map((visit) => ({
+    id: visit.id,
+    dateLabel: formatDate(visit.date),
+    serviceName: visit.serviceName,
+    // 'Capacitor replacement', or 'Contactor replacement ×2' for more than one.
+    repairs: repairs
+      .filter((repair) => repair.jobId === visit.id)
+      .map((repair) =>
+        repair.quantity > 1 ? `${repair.description} ×${repair.quantity}` : repair.description,
+      ),
+  }))
+}
+
 // Everything the technician needs for the visit. Office-only parts (the schedule, allowed
 // status changes, the customer's email, where the booking came from) are left out.
 export async function getMyJob(user: SessionUser, jobId: string) {
   const job = await findMyJob(user, jobId)
   const tenantId = tenantOf(user)
-  const [notes, photos, workPhotos, timezone, jobCharges] = await Promise.all([
+  const [notes, photos, workPhotos, timezone, jobCharges, history] = await Promise.all([
     dispatchQueries.listNotes(tenantId, jobId),
     dispatchQueries.listJobPhotos(tenantId, jobId),
     dispatchQueries.listWorkPhotos(tenantId, jobId),
     dispatchQueries.findTimezone(tenantId),
     charges.getCharges(tenantId, jobId),
+    listHistory(tenantId, jobId),
   ])
   return {
     job: {
@@ -110,6 +139,7 @@ export async function getMyJob(user: SessionUser, jobId: string) {
     // The technician's own before and after shots, kept apart from the homeowner's.
     workPhotos: groupWorkPhotos(workPhotos, `/my-jobs/${jobId}/work-photos`),
     charges: jobCharges,
+    history,
   }
 }
 
