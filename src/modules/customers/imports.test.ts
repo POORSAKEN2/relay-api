@@ -75,6 +75,18 @@ describe('POST /api/customers/imports/check', () => {
     expect(tooBig.body.error.details.rows).toEqual(['Import up to 5,000 rows at a time'])
   })
 
+  it('doesn’t count another contractor’s customers as already in Relay', async () => {
+    const shop = await createShop('desert')
+    await createShop('other') // also has Maria Lopez, +16025550111
+    // Remove desert's own Maria (her property first) so only `other` has her.
+    await db.delete(properties).where(eq(properties.tenantId, shop.tenant.id))
+    await db.delete(customers).where(eq(customers.tenantId, shop.tenant.id))
+    const res = await postAs(shop, '/api/customers/imports/check', {
+      rows: [{ row: 2, name: 'Maria Lopez', phone: '(602) 555-0111' }],
+    }).expect(200)
+    expect(res.body.rows).toEqual([{ row: 2, status: 'ready', problems: [] }])
+  })
+
   it('is for the owner and office only', async () => {
     const shop = await createShop('desert')
     const cookie = await signInTechnician(shop.mike)
