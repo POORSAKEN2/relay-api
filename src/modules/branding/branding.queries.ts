@@ -1,6 +1,12 @@
 import { desc, eq } from 'drizzle-orm'
-import { db } from '../../db/client.ts'
-import { type BrandingVersion, brandingVersions, type Tenant, tenants } from '../../db/schema.ts'
+import { type Db, db } from '../../db/client.ts'
+import {
+  type BrandingVersion,
+  brandingAssets,
+  brandingVersions,
+  type Tenant,
+  tenants,
+} from '../../db/schema.ts'
 
 export type TenantHost = { slug: string } | { customDomain: string }
 
@@ -33,6 +39,29 @@ export async function findLatestBranding(tenantId: string): Promise<BrandingVers
 export async function insertBranding(
   tenantId: string,
   values: Omit<typeof brandingVersions.$inferInsert, 'tenantId'>,
+  tx: Db = db,
 ) {
-  await db.insert(brandingVersions).values({ ...values, tenantId })
+  await tx.insert(brandingVersions).values({ ...values, tenantId })
+}
+
+export async function insertAsset(
+  tenantId: string,
+  values: Omit<typeof brandingAssets.$inferInsert, 'tenantId' | 'id' | 'createdAt'>,
+  tx: Db,
+) {
+  const [asset] = await tx
+    .insert(brandingAssets)
+    .values({ ...values, tenantId })
+    .returning({ id: brandingAssets.id })
+  return asset
+}
+
+// Not tenant-scoped: images are public, found by their random id.
+export async function findAsset(id: string) {
+  const [asset] = await db
+    .select({ contentType: brandingAssets.contentType, data: brandingAssets.data })
+    .from(brandingAssets)
+    .where(eq(brandingAssets.id, id))
+    .limit(1)
+  return asset
 }

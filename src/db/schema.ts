@@ -215,6 +215,33 @@ export const BRANDING_ASSET_TYPES = ['image/png', 'image/svg+xml'] as const
 export const LOGO_MAX_BYTES = 512 * 1024
 export const FAVICON_MAX_BYTES = 100 * 1024
 
+// A contractor's uploaded logo or favicon. Never changed or deleted: branding versions point
+// at these, the old versions included. In Postgres like photos, until file storage is chosen.
+export const brandingAssets = pgTable(
+  'branding_assets',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: tenantId(),
+    kind: text('kind', { enum: BRANDING_ASSET_KINDS }).notNull(),
+    contentType: text('content_type', { enum: BRANDING_ASSET_TYPES }).notNull(),
+    data: bytea('data').notNull(),
+    // Plain FK: the uploader is a superadmin, who has no tenant.
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique().on(t.tenantId, t.id),
+    check('branding_assets_kind_valid', oneOf(t.kind, BRANDING_ASSET_KINDS)),
+    check('branding_assets_content_type_valid', oneOf(t.contentType, BRANDING_ASSET_TYPES)),
+    check(
+      'branding_assets_size',
+      sql`octet_length(${t.data}) between 1 and ${sql.raw(String(LOGO_MAX_BYTES))}`,
+    ),
+  ],
+)
+
 // Append-only: the newest row per tenant is the current branding.
 export const brandingVersions = pgTable(
   'branding_versions',
@@ -223,8 +250,8 @@ export const brandingVersions = pgTable(
     tenantId: tenantId(),
     primaryColor: text('primary_color').notNull(),
     accentColor: text('accent_color').notNull(),
-    logoUrl: text('logo_url'),
-    faviconUrl: text('favicon_url'),
+    logoAssetId: uuid('logo_asset_id'),
+    faviconAssetId: uuid('favicon_asset_id'),
     // Plain FK: the author is a superadmin, who has no tenant.
     createdBy: uuid('created_by')
       .notNull()
@@ -235,6 +262,17 @@ export const brandingVersions = pgTable(
     check('branding_versions_primary_color_format', sql`${t.primaryColor} ~ '^#[0-9a-f]{6}$'`),
     check('branding_versions_accent_color_format', sql`${t.accentColor} ~ '^#[0-9a-f]{6}$'`),
     index('branding_versions_tenant_newest_idx').on(t.tenantId, t.createdAt.desc().nullsFirst()),
+    // A version can only use its own contractor's images.
+    foreignKey({
+      name: 'branding_versions_logo_fk',
+      columns: [t.tenantId, t.logoAssetId],
+      foreignColumns: [brandingAssets.tenantId, brandingAssets.id],
+    }),
+    foreignKey({
+      name: 'branding_versions_favicon_fk',
+      columns: [t.tenantId, t.faviconAssetId],
+      foreignColumns: [brandingAssets.tenantId, brandingAssets.id],
+    }),
   ],
 )
 

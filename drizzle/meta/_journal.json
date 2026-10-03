@@ -64,6 +64,20 @@
       "when": 1790880828793,
       "tag": "0008_job_booked_lines",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791016522285,
+      "tag": "0009_branding_assets",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1791016526095,
+      "tag": "0010_drop_branding_urls",
+      "breakpoints": true
     }
   ]
 }
