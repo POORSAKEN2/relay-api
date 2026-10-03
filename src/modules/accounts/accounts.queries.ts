@@ -1,4 +1,4 @@
-import { and, count, desc, eq, gt, isNull, lt, sql } from 'drizzle-orm'
+import { and, count, desc, eq, gt, isNull, lt, ne, or, sql } from 'drizzle-orm'
 import { db } from '../../db/client.ts'
 import { sessions, signInCodes, tenants, type User, users } from '../../db/schema.ts'
 
@@ -10,6 +10,15 @@ export async function findUserByEmail(email: string): Promise<User | undefined> 
   return user
 }
 
+export async function findTenantStatus(tenantId: string) {
+  const [tenant] = await db
+    .select({ status: tenants.status })
+    .from(tenants)
+    .where(eq(tenants.id, tenantId))
+    .limit(1)
+  return tenant?.status
+}
+
 export async function insertSession(values: { id: string; userId: string; expiresAt: Date }) {
   await db.insert(sessions).values(values)
 }
@@ -19,9 +28,17 @@ export async function findSessionWithUser(id: string) {
     .select({ session: sessions, user: users })
     .from(sessions)
     .innerJoin(users, eq(sessions.userId, users.id))
-    // Deactivation deletes sessions, but a sign-in racing it could insert one afterwards.
-    // Checking here makes deactivation hold whatever the order.
-    .where(and(eq(sessions.id, id), isNull(users.disabledAt)))
+    .leftJoin(tenants, eq(users.tenantId, tenants.id))
+    // Deactivating a user or turning off a contractor deletes sessions, but a sign-in racing
+    // it could insert one afterwards. Checking here makes both hold whatever the order.
+    // The superadmin has no contractor.
+    .where(
+      and(
+        eq(sessions.id, id),
+        isNull(users.disabledAt),
+        or(isNull(users.tenantId), ne(tenants.status, 'suspended')),
+      ),
+    )
     .limit(1)
   return row
 }
@@ -45,7 +62,12 @@ export async function deleteExpiredSessions(now: Date): Promise<number> {
 // An active technician with this phone, and their contractor for the sign-in text.
 export async function findTechnicianByPhone(phone: string) {
   const [row] = await db
-    .select({ user: users, tenantId: tenants.id, tenantName: tenants.name })
+    .select({
+      user: users,
+      tenantId: tenants.id,
+      tenantName: tenants.name,
+      tenantStatus: tenants.status,
+    })
     .from(users)
     .innerJoin(tenants, eq(users.tenantId, tenants.id))
     .where(and(eq(users.phone, phone), eq(users.role, 'technician'), isNull(users.disabledAt)))

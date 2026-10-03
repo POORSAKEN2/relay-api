@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { createTenant, createUser, resetDb, signIn } from '../../../test/helpers.ts'
 import { createApp } from '../../app.ts'
 import { db } from '../../db/client.ts'
-import { brandingVersions } from '../../db/schema.ts'
+import { brandingVersions, tenants } from '../../db/schema.ts'
 import { DEFAULT_COLORS } from './branding.service.ts'
 
 const app = createApp()
@@ -51,6 +51,20 @@ describe('GET /api/branding', () => {
 
     expect(desertRes.body.primaryColor).toBe('#0f766e')
     expect(otherRes.body.primaryColor).toBe(DEFAULT_COLORS.primaryColor)
+  })
+
+  it('answers 410 for a turned-off contractor', async () => {
+    const desert = await createTenant('desert')
+    await db.update(tenants).set({ status: 'suspended' }).where(eq(tenants.id, desert.id))
+
+    const res = await request(app)
+      .get('/api/branding')
+      .set('X-Tenant-Host', 'desert.localhost')
+      .expect(410)
+    expect(res.body.error).toEqual({
+      code: 'contractor_unavailable',
+      message: 'This contractor is not taking bookings right now',
+    })
   })
 })
 
