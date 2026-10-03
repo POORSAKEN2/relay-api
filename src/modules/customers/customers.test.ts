@@ -199,3 +199,85 @@ describe('POST /api/customers', () => {
     ])
   })
 })
+
+describe('GET /api/customers/:customerId', () => {
+  it('returns the customer, their addresses and their jobs, upcoming first', async () => {
+    const shop = await createShop('desert')
+    await db
+      .update(properties)
+      .set({ equipmentBrand: 'Carrier', equipmentYear: 2014, notes: 'Gate 4411' })
+      .where(eq(properties.id, shop.property.id))
+    await createJob(shop, { at: `${WEDNESDAY} 08:00` })
+    await createJob(shop, { at: `${TUESDAY} 08:00`, technicianId: shop.mike.id })
+    await createJob(shop, {
+      at: '2020-01-07 08:00',
+      status: 'done',
+      technicianId: shop.mike.id,
+      completedAt: new Date('2020-01-07T18:00:00Z'),
+    })
+    await createJob(shop, { at: '2021-03-02 08:00', status: 'cancelled' })
+    // Abandoned booking attempts are not history.
+    await createJob(shop, { at: `${TUESDAY} 12:00`, status: 'held', holdExpiresAt: new Date() })
+    await createJob(shop, { at: `${TUESDAY} 12:00`, status: 'expired' })
+
+    const res = await getAs(shop, `/api/customers/${shop.customer.id}`)
+    expect(res.body.customer).toEqual({
+      id: shop.customer.id,
+      name: 'Maria Lopez',
+      phone: '+16025550111',
+      email: null,
+      notes: null,
+      source: 'office',
+      createdAt: expect.any(String),
+    })
+    expect(res.body.properties).toEqual([
+      {
+        id: shop.property.id,
+        street: '12 Palm St',
+        unit: null,
+        city: 'Phoenix',
+        state: 'AZ',
+        zip: '85004',
+        equipmentBrand: 'Carrier',
+        equipmentYear: 2014,
+        notes: 'Gate 4411',
+      },
+    ])
+    expect(
+      res.body.jobs.map((job: { date: string; status: string; upcoming: boolean }) => [
+        job.date,
+        job.status,
+        job.upcoming,
+      ]),
+    ).toEqual([
+      [TUESDAY, 'booked', true],
+      [WEDNESDAY, 'booked', true],
+      ['2021-03-02', 'cancelled', false],
+      ['2020-01-07', 'done', false],
+    ])
+    expect(res.body.jobs[0]).toEqual({
+      id: expect.any(String),
+      status: 'booked',
+      upcoming: true,
+      propertyId: shop.property.id,
+      date: TUESDAY,
+      dateLabel: 'Jan 8, 2030',
+      windowLabel: '8 AM–12 PM',
+      serviceName: 'AC repair',
+      problem: 'AC blowing warm air',
+      technicianName: 'Mike',
+    })
+    expect(res.body.jobs[1].technicianName).toBeNull()
+    expect(res.body.jobsTotal).toBe(4)
+  })
+
+  it("can't open another contractor's customer", async () => {
+    const shop = await createShop('desert')
+    const other = await createShop('other')
+    const res = await request(app)
+      .get(`/api/customers/${other.customer.id}`)
+      .set('Cookie', shop.cookie)
+      .expect(404)
+    expect(res.body.error).toEqual({ code: 'not_found', message: 'That customer wasn’t found.' })
+  })
+})

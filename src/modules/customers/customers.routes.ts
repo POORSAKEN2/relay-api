@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { requireRole } from '../../middleware/auth.ts'
 import { tenantOf } from '../booking/booking.service.ts'
-import { CustomerListQuery, NewCustomerInput } from './customers.schemas.ts'
+import { CustomerListQuery, CustomerParams, NewCustomerInput } from './customers.schemas.ts'
 import * as customers from './customers.service.ts'
 
 export const customersRoutes = Router()
@@ -16,4 +16,9 @@ customersRoutes.get('/customers', staff, async (req, res) => {
 customersRoutes.post('/customers', staff, async (req, res) => {
   const input = NewCustomerInput.parse(req.body)
   res.status(201).json(await customers.create(tenantOf(req.user!), input))
+})
+
+customersRoutes.get('/customers/:customerId', staff, async (req, res) => {
+  const { customerId } = CustomerParams.parse(req.params)
+  res.json(await customers.detail(tenantOf(req.user!), customerId))
 })

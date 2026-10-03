@@ -31,3 +31,5 @@ export type CustomerListQuery = z.infer<typeof CustomerListQuery>
 // they have it.
 export const NewCustomerInput = NewCustomer.extend({ property: NewProperty.optional() })
 export type NewCustomerInput = z.infer<typeof NewCustomerInput>
+
+export const CustomerParams = z.object({ customerId: z.uuid('That customer link isn’t valid') })

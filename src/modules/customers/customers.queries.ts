@@ -1,6 +1,7 @@
-import { and, asc, desc, eq, exists, ilike, inArray, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, exists, ilike, inArray, notInArray, or, sql } from 'drizzle-orm'
 import { type Db, db } from '../../db/client.ts'
-import { customers, jobs, properties, tenants } from '../../db/schema.ts'
+import { customers, jobs, properties, services, tenants, users } from '../../db/schema.ts'
+import { local } from '../dispatch/dispatch.queries.ts'
 import type { CustomerListQuery } from './customers.schemas.ts'
 
 // Tenant-scoped: every query takes tenantId first.
@@ -166,6 +167,43 @@ export async function listCustomers(
     .offset((page - 1) * pageSize)
   const total = await db.$count(customers, where)
   return { rows, total }
+}
+
+// A customer's jobs on their record: everything but abandoned booking attempts.
+function inHistory(tenantId: string, customerId: string) {
+  return and(
+    eq(jobs.tenantId, tenantId),
+    eq(jobs.customerId, customerId),
+    notInArray(jobs.status, ['held', 'expired']),
+  )
+}
+
+// The customer's newest `limit` jobs, newest first, with local day and window times.
+export function listJobHistory(tenantId: string, customerId: string, limit: number) {
+  return db
+    .select({
+      id: jobs.id,
+      status: jobs.status,
+      upcoming: isUpcoming,
+      propertyId: jobs.propertyId,
+      date: local(jobs.windowStartsAt, 'YYYY-MM-DD'),
+      localStart: local(jobs.windowStartsAt, 'HH24:MI:SS'),
+      localEnd: local(jobs.windowEndsAt, 'HH24:MI:SS'),
+      serviceName: services.name,
+      problem: jobs.problem,
+      technicianName: users.name,
+    })
+    .from(jobs)
+    .innerJoin(tenants, eq(tenants.id, jobs.tenantId))
+    .innerJoin(services, eq(services.id, jobs.serviceId))
+    .leftJoin(users, eq(users.id, jobs.technicianId))
+    .where(inHistory(tenantId, customerId))
+    .orderBy(desc(jobs.windowStartsAt))
+    .limit(limit)
+}
+
+export function countJobHistory(tenantId: string, customerId: string) {
+  return db.$count(jobs, inHistory(tenantId, customerId))
 }
 
 // Name, email or one of their streets contains the text, or the phone contains its digits

@@ -1,9 +1,16 @@
 import { db } from '../../db/client.ts'
+import type { customers } from '../../db/schema.ts'
+import { HttpError } from '../../lib/http-error.ts'
+import { formatDate, formatWindow } from '../../lib/labels.ts'
 import * as queries from './customers.queries.ts'
 import type { CustomerListQuery, NewCustomerInput, NewProperty } from './customers.schemas.ts'
 
 // Customers on one page of the list. The web app reads it from the response.
 export const PAGE_SIZE = 25
+
+// The record page shows this many jobs; `jobsTotal` says how many there are in all.
+const HISTORY_LIMIT = 100
+const CUSTOMER_NOT_FOUND = 'That customer wasn’t found.'
 
 // One page of the customer list, with every customer's addresses and visit dates.
 export async function list(tenantId: string, query: CustomerListQuery) {
@@ -67,4 +74,33 @@ function propertyValues(input: AddressFields) {
     equipmentYear: input.equipmentYear ?? null,
     notes: input.notes ?? null,
   }
+}
+
+// Everything on one customer's page: contact, addresses with equipment, and their jobs:
+// upcoming ones first (soonest first), then past ones (newest first).
+export async function detail(tenantId: string, customerId: string) {
+  const customer = await queries.findCustomer(tenantId, customerId)
+  if (!customer) throw new HttpError(404, 'not_found', CUSTOMER_NOT_FOUND)
+  const [properties, jobs, jobsTotal] = await Promise.all([
+    queries.listProperties(tenantId, [customerId]),
+    queries.listJobHistory(tenantId, customerId, HISTORY_LIMIT),
+    queries.countJobHistory(tenantId, customerId),
+  ])
+  const upcoming = jobs.filter((job) => job.upcoming).reverse()
+  const past = jobs.filter((job) => !job.upcoming)
+  return {
+    customer: toCustomer(customer),
+    properties: addressesOf(customerId, properties),
+    jobs: [...upcoming, ...past].map(({ localStart, localEnd, ...job }) => ({
+      ...job,
+      dateLabel: formatDate(job.date),
+      windowLabel: formatWindow(localStart, localEnd),
+    })),
+    jobsTotal,
+  }
+}
+
+// What the web app sees of a customer: everything but the tenant id.
+function toCustomer({ tenantId: _, ...customer }: typeof customers.$inferSelect) {
+  return customer
 }
