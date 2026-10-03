@@ -1,10 +1,10 @@
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import request from 'supertest'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createTenant, createUser, resetDb, signIn } from '../../../test/helpers.ts'
 import { createApp } from '../../app.ts'
 import { db } from '../../db/client.ts'
-import { auditEvents, tenants } from '../../db/schema.ts'
+import { auditEvents, sessions, tenants, users } from '../../db/schema.ts'
 import * as accounts from '../accounts/accounts.service.ts'
 import { generateTemporaryPassword } from './tenants.service.ts'
 
@@ -178,5 +178,108 @@ describe('generateTemporaryPassword', () => {
       expect(password).toMatch(/^[a-km-zA-HJ-NP-Z2-9]{12}$/)
     }
     expect(new Set(passwords).size).toBe(50)
+  })
+})
+
+describe('PATCH /api/admin/tenants/:tenantId/status', () => {
+  async function sessionCount(tenantId: string) {
+    const rows = await db
+      .select({ id: sessions.id })
+      .from(sessions)
+      .innerJoin(users, eq(sessions.userId, users.id))
+      .where(eq(users.tenantId, tenantId))
+    return rows.length
+  }
+
+  async function statusEvents(tenantId: string) {
+    return db
+      .select({ data: auditEvents.data })
+      .from(auditEvents)
+      .where(
+        and(eq(auditEvents.tenantId, tenantId), eq(auditEvents.action, 'tenant.status_changed')),
+      )
+  }
+
+  it('moves a contractor between statuses and records each change', async () => {
+    const desert = await createTenant('desert')
+    const { cookie } = await signedInAdmin()
+    const url = `/api/admin/tenants/${desert.id}/status`
+
+    const live = await request(app)
+      .patch(url)
+      .set('Cookie', cookie)
+      .send({ status: 'live' })
+      .expect(200)
+    expect(live.body.tenant).toMatchObject({ id: desert.id, status: 'live' })
+
+    await request(app).patch(url).set('Cookie', cookie).send({ status: 'suspended' }).expect(200)
+    await request(app).patch(url).set('Cookie', cookie).send({ status: 'live' }).expect(200)
+
+    expect((await statusEvents(desert.id)).map((e) => e.data)).toEqual([
+      { from: 'setup', to: 'live' },
+      { from: 'live', to: 'suspended' },
+      { from: 'suspended', to: 'live' },
+    ])
+  })
+
+  it('signs out everyone at a suspended contractor, and nobody else', async () => {
+    const desert = await createTenant('desert')
+    const other = await createTenant('other')
+    const desertOwner = await createUser('owner', desert.id)
+    const desertOffice = await createUser('office', desert.id)
+    const otherOwner = await createUser('owner', other.id)
+    await signIn(desertOwner.email)
+    await signIn(desertOffice.email)
+    await signIn(otherOwner.email)
+    const { cookie } = await signedInAdmin()
+
+    await request(app)
+      .patch(`/api/admin/tenants/${desert.id}/status`)
+      .set('Cookie', cookie)
+      .send({ status: 'suspended' })
+      .expect(200)
+
+    expect(await sessionCount(desert.id)).toBe(0)
+    expect(await sessionCount(other.id)).toBe(1)
+    await request(app).get('/api/admin/tenants').set('Cookie', cookie).expect(200)
+  })
+
+  it('records nothing when the status is already set', async () => {
+    const desert = await createTenant('desert')
+    const { cookie } = await signedInAdmin()
+    const url = `/api/admin/tenants/${desert.id}/status`
+
+    await request(app).patch(url).set('Cookie', cookie).send({ status: 'live' }).expect(200)
+    await request(app).patch(url).set('Cookie', cookie).send({ status: 'live' }).expect(200)
+
+    expect(await statusEvents(desert.id)).toHaveLength(1)
+  })
+
+  it('404s for an unknown contractor and rejects an unknown status', async () => {
+    const desert = await createTenant('desert')
+    const { cookie } = await signedInAdmin()
+
+    await request(app)
+      .patch('/api/admin/tenants/00000000-0000-4000-8000-000000000000/status')
+      .set('Cookie', cookie)
+      .send({ status: 'live' })
+      .expect(404)
+    const bad = await request(app)
+      .patch(`/api/admin/tenants/${desert.id}/status`)
+      .set('Cookie', cookie)
+      .send({ status: 'deleted' })
+      .expect(400)
+    expect(Object.keys(bad.body.error.details)).toEqual(['status'])
+  })
+
+  it('needs a signed-in superadmin', async () => {
+    const desert = await createTenant('desert')
+    const owner = await createUser('owner', desert.id)
+
+    await request(app)
+      .patch(`/api/admin/tenants/${desert.id}/status`)
+      .set('Cookie', await signIn(owner.email))
+      .send({ status: 'suspended' })
+      .expect(403)
   })
 })

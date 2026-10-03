@@ -6,7 +6,7 @@ import type { SessionUser } from '../accounts/accounts.service.ts'
 import { hashPassword } from '../accounts/passwords.ts'
 import * as audit from '../audit/audit.queries.ts'
 import * as queries from './tenants.queries.ts'
-import type { CreateTenantInput } from './tenants.schemas.ts'
+import type { CreateTenantInput, TenantStatus } from './tenants.schemas.ts'
 
 // The superadmin adds contractors and turns them on and off. Contractors are never deleted.
 
@@ -61,4 +61,29 @@ export async function createTenant(admin: SessionUser, input: CreateTenantInput)
     }
     throw error
   }
+}
+
+// Turning a contractor off signs its people out at once. Sessions and sign-in also check
+// the status (modules/accounts), so a sign-in racing this can't slip through.
+export async function setTenantStatus(admin: SessionUser, tenantId: string, status: TenantStatus) {
+  return db.transaction(async (tx) => {
+    const current = await queries.findTenantStatusForUpdate(tenantId, tx)
+    if (!current) throw new HttpError(404, 'not_found', 'Contractor not found')
+    const tenant = await queries.updateTenantStatus(tenantId, status, tx)
+    if (status === 'suspended') await queries.deleteTenantSessions(tenantId, tx)
+    if (current.status !== status) {
+      await audit.insertUserAction(
+        tenantId,
+        {
+          actorUserId: admin.id,
+          action: 'tenant.status_changed',
+          entityType: 'tenant',
+          entityId: tenantId,
+          data: { from: current.status, to: status },
+        },
+        tx,
+      )
+    }
+    return tenant
+  })
 }

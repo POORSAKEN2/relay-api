@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { TENANT_STATUSES } from '../../db/schema.ts'
+import { TENANT_STATUSES } from '../../db/schema.ts'
 import { UsPhone } from '../../lib/fields.ts'
 
 export type TenantStatus = (typeof TENANT_STATUSES)[number]
@@ -33,3 +33,7 @@ export const CreateTenantInput = z.object({
   }),
 })
 export type CreateTenantInput = z.infer<typeof CreateTenantInput>
+
+export const TenantStatusInput = z.object({
+  status: z.enum(TENANT_STATUSES, 'Pick setup, live or suspended'),
+})
