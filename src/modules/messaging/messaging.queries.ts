@@ -1,6 +1,15 @@
-import { and, desc, eq, inArray, isNull, lte, ne, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, lte, ne, or, sql } from 'drizzle-orm'
 import { type Db, db } from '../../db/client.ts'
-import { consentEvents, messages, phoneNumbers, tenants } from '../../db/schema.ts'
+import {
+  calls,
+  consentEvents,
+  customers,
+  type MESSAGE_STATUSES,
+  messages,
+  phoneNumbers,
+  tenants,
+  webhookEvents,
+} from '../../db/schema.ts'
 
 // Tenant-scoped queries take tenantId first. The sender's work on a message by id is not
 // tenant-scoped: it serves every contractor.
@@ -106,4 +115,76 @@ export async function markFailed(messageId: string, error: string) {
     .update(messages)
     .set({ status: 'failed', lastError: error })
     .where(eq(messages.id, messageId))
+}
+
+// ----- Webhooks -----
+
+// Saves that an event arrived. False if it was already saved: a repeat to ignore.
+export async function recordWebhookEvent(eventId: string, tx: Db) {
+  const saved = await tx
+    .insert(webhookEvents)
+    .values({ provider: 'httpsms', eventId })
+    .onConflictDoNothing()
+    .returning({ eventId: webhookEvents.eventId })
+  return saved.length > 0
+}
+
+// Moves an outbound text to `status`, only from one of `from`, so a late event never undoes a
+// later one. The text is found by our id (httpSMS's request_id) or by httpSMS's id.
+export async function updateTextStatus(
+  find: { messageId: string | null; providerMessageId: string | null },
+  change: { status: (typeof MESSAGE_STATUSES)[number]; lastError?: string },
+  from: (typeof MESSAGE_STATUSES)[number][],
+  tx: Db,
+) {
+  const matches = [
+    find.messageId ? eq(messages.id, find.messageId) : undefined,
+    find.providerMessageId ? eq(messages.providerMessageId, find.providerMessageId) : undefined,
+  ].filter((match) => match !== undefined)
+  if (matches.length === 0) return
+  await tx
+    .update(messages)
+    .set(change)
+    .where(and(eq(messages.direction, 'outbound'), inArray(messages.status, from), or(...matches)))
+}
+
+// The contractor whose active number this is.
+export async function findTenantIdByNumber(number: string, tx: Db) {
+  const [phone] = await tx
+    .select({ tenantId: phoneNumbers.tenantId })
+    .from(phoneNumbers)
+    .where(and(eq(phoneNumbers.number, number), eq(phoneNumbers.status, 'active')))
+  return phone?.tenantId
+}
+
+// The oldest customer with this phone, if any.
+export async function findCustomerIdByPhone(tenantId: string, phone: string, tx: Db) {
+  const [customer] = await tx
+    .select({ id: customers.id })
+    .from(customers)
+    .where(and(eq(customers.tenantId, tenantId), eq(customers.phone, phone)))
+    .orderBy(asc(customers.createdAt))
+    .limit(1)
+  return customer?.id
+}
+
+export async function insertReplyConsent(
+  tenantId: string,
+  values: { contact: string; granted: boolean; messageId: string },
+  tx: Db,
+) {
+  await tx
+    .insert(consentEvents)
+    .values({ tenantId, channel: 'sms', source: 'sms_reply', ...values })
+}
+
+export async function insertMissedCall(
+  tenantId: string,
+  values: Omit<typeof calls.$inferInsert, 'tenantId'>,
+  tx: Db,
+) {
+  await tx
+    .insert(calls)
+    .values({ tenantId, ...values })
+    .onConflictDoNothing()
 }
