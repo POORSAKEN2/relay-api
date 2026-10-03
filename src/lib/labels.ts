@@ -49,6 +49,18 @@ export function formatDay(date: string): string {
   return dayFormat.format(new Date(`${date}T00:00:00Z`))
 }
 
+const dateFormat = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+  timeZone: 'UTC',
+})
+
+// '2030-01-08' → 'Jan 8, 2030'. For history, where the year matters.
+export function formatDate(date: string): string {
+  return dateFormat.format(new Date(`${date}T00:00:00Z`))
+}
+
 // 0 → 'Sundays'
 export function weekdaysLabel(weekday: number): string {
   return WEEKDAYS_PLURAL[weekday]

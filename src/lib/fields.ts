@@ -16,10 +16,12 @@ export const UsPhone = z
     return `+1${national}`
   })
 
+export const Email = z.email('Enter a valid email address').trim().toLowerCase()
+
 // A blank field means "no email".
 export const OptionalEmail = z.preprocess(
   (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
-  z.email('Enter a valid email address').trim().toLowerCase().optional(),
+  Email.optional(),
 )
 
 // A local calendar day, '2030-01-08'. Impossible days such as '2030-02-31' are refused.
