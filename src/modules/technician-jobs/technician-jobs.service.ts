@@ -1,5 +1,11 @@
 import { db, type Tx } from '../../db/client.ts'
+import {
+  JOB_PHOTO_MAX_BYTES,
+  MAX_JOB_PHOTOS_PER_STAGE,
+  type PHOTO_STAGES,
+} from '../../db/schema.ts'
 import { HttpError } from '../../lib/http-error.ts'
+import { photoTypeOf } from '../../lib/image-type.ts'
 import { formatClock, formatDay, formatTime, formatWindow, statusLabel } from '../../lib/labels.ts'
 import { emitToTenant } from '../../realtime/index.ts'
 import type { SessionUser } from '../accounts/accounts.service.ts'
@@ -8,18 +14,19 @@ import { tenantOf } from '../booking/booking.service.ts'
 import * as catalog from '../catalog/catalog.service.ts'
 import * as charges from '../charges/charges.service.ts'
 import * as dispatchQueries from '../dispatch/dispatch.queries.ts'
-import { arrivalLabel, changeStatus } from '../dispatch/dispatch.service.ts'
+import { arrivalLabel, changeStatus, groupWorkPhotos } from '../dispatch/dispatch.service.ts'
 import { sendText } from '../messaging/sms.ts'
 import * as queries from './technician-jobs.queries.ts'
 import { noAccessText, onMyWayText, runningLateText } from './texts.ts'
 
 // The technician's side of jobs: only the jobs the office assigned to them, and the buttons
 // that move a visit along. Status rules live in dispatch (changeStatus); this module adds the
-// "is it yours" check, arrival times and the homeowner's texts. Photos and payment come in
-// later parts of module 8.
+// "is it yours" check, arrival times, the homeowner's texts and the technician's own photos.
 
 const DAYS_SHOWN = 7 // today and the next 6 days
 const NOT_YOURS = 'This job isn’t assigned to you anymore.'
+
+type PhotoStage = (typeof PHOTO_STAGES)[number]
 
 type CardRow = Awaited<ReturnType<typeof queries.listTechnicianJobs>>[number]
 
@@ -71,9 +78,10 @@ async function findMyJob(user: SessionUser, jobId: string) {
 export async function getMyJob(user: SessionUser, jobId: string) {
   const job = await findMyJob(user, jobId)
   const tenantId = tenantOf(user)
-  const [notes, photos, timezone, jobCharges] = await Promise.all([
+  const [notes, photos, workPhotos, timezone, jobCharges] = await Promise.all([
     dispatchQueries.listNotes(tenantId, jobId),
     dispatchQueries.listJobPhotos(tenantId, jobId),
+    dispatchQueries.listWorkPhotos(tenantId, jobId),
     dispatchQueries.findTimezone(tenantId),
     charges.getCharges(tenantId, jobId),
   ])
@@ -99,6 +107,8 @@ export async function getMyJob(user: SessionUser, jobId: string) {
     notes,
     // `url` is a path under the API; the web app puts the API's address in front.
     photos: photos.map((photo) => ({ id: photo.id, url: `/my-jobs/${jobId}/photos/${photo.id}` })),
+    // The technician's own before and after shots, kept apart from the homeowner's.
+    workPhotos: groupWorkPhotos(workPhotos, `/my-jobs/${jobId}/work-photos`),
     charges: jobCharges,
   }
 }
@@ -107,6 +117,75 @@ export async function getMyJob(user: SessionUser, jobId: string) {
 export async function getMyJobPhoto(user: SessionUser, jobId: string, photoId: string) {
   await findMyJob(user, jobId)
   const photo = await dispatchQueries.findJobPhoto(tenantOf(user), jobId, photoId)
+  if (!photo) throw new HttpError(404, 'not_found', 'That photo isn’t on this job.')
+  return photo
+}
+
+// Photos change only while the technician is at the unit with the visit started. Before that
+// there is nothing to photograph; after it the visit is a finished record.
+function checkPhotosOpen(status: string) {
+  if (status === 'in_progress') return
+  if (status === 'booked' || status === 'en_route') {
+    throw new HttpError(422, 'photos_not_open', 'Start the visit before adding photos.')
+  }
+  throw new HttpError(422, 'photos_closed', 'This visit is finished, so its photos can’t change.')
+}
+
+// A photo the technician takes on the visit. The bytes decide the type, and the job row is
+// locked while counting, so two quick uploads can't both take the last place in a stage.
+export async function addWorkPhoto(
+  user: SessionUser,
+  jobId: string,
+  stage: PhotoStage,
+  body: unknown,
+) {
+  const contentType = Buffer.isBuffer(body) ? photoTypeOf(body) : null
+  if (!Buffer.isBuffer(body) || !contentType) {
+    throw new HttpError(422, 'not_a_photo', 'Pick a JPEG, PNG or WebP photo.')
+  }
+  if (body.length > JOB_PHOTO_MAX_BYTES) {
+    throw new HttpError(413, 'photo_too_large', 'That photo is too large. Pick a smaller one.')
+  }
+  await findMyJob(user, jobId)
+  const tenantId = tenantOf(user)
+  await db.transaction(async (tx) => {
+    const job = await dispatchQueries.lockJob(tenantId, jobId, tx)
+    if (!job || job.technicianId !== user.id) throw notYours()
+    checkPhotosOpen(job.status)
+    const photos = await dispatchQueries.listWorkPhotos(tenantId, jobId, tx)
+    if (photos.filter((photo) => photo.stage === stage).length >= MAX_JOB_PHOTOS_PER_STAGE) {
+      throw new HttpError(
+        409,
+        'too_many_photos',
+        `You can add up to ${MAX_JOB_PHOTOS_PER_STAGE} ${stage} photos.`,
+      )
+    }
+    await dispatchQueries.insertWorkPhoto(
+      tenantId,
+      { jobId, stage, contentType, data: body, uploadedBy: user.id },
+      tx,
+    )
+  })
+  return getMyJob(user, jobId)
+}
+
+// Removing a photo that is already gone is harmless.
+export async function removeWorkPhoto(user: SessionUser, jobId: string, photoId: string) {
+  await findMyJob(user, jobId)
+  const tenantId = tenantOf(user)
+  await db.transaction(async (tx) => {
+    const job = await dispatchQueries.lockJob(tenantId, jobId, tx)
+    if (!job || job.technicianId !== user.id) throw notYours()
+    checkPhotosOpen(job.status)
+    await dispatchQueries.deleteWorkPhoto(tenantId, jobId, photoId, tx)
+  })
+  return getMyJob(user, jobId)
+}
+
+// A photo the technician took on one of their own jobs.
+export async function getWorkPhoto(user: SessionUser, jobId: string, photoId: string) {
+  await findMyJob(user, jobId)
+  const photo = await dispatchQueries.findWorkPhoto(tenantOf(user), jobId, photoId)
   if (!photo) throw new HttpError(404, 'not_found', 'That photo isn’t on this job.')
   return photo
 }

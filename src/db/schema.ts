@@ -700,6 +700,9 @@ export const jobNotes = pgTable(
 )
 
 export const PHOTO_STAGES = ['before', 'after'] as const
+export const JOB_PHOTO_MAX_BYTES = 1024 * 1024
+// Per stage, per job: enough for a unit, its label and the finished work.
+export const MAX_JOB_PHOTOS_PER_STAGE = 6
 
 export const jobPhotos = pgTable(
   'job_photos',
@@ -707,8 +710,10 @@ export const jobPhotos = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     tenantId: tenantId(),
     jobId: uuid('job_id').notNull(),
-    storageKey: text('storage_key').notNull(), // private file-storage key, served by signed URL
     stage: text('stage', { enum: PHOTO_STAGES }).notNull(),
+    // Read from the bytes on upload, never from the upload's header. Same list as profile photos.
+    contentType: text('content_type', { enum: PROFILE_PHOTO_TYPES }).notNull(),
+    data: bytea('data').notNull(),
     uploadedBy: uuid('uploaded_by').notNull(),
     createdAt: createdAt(),
   },
@@ -724,6 +729,11 @@ export const jobPhotos = pgTable(
       foreignColumns: [users.tenantId, users.id],
     }),
     check('job_photos_stage_valid', oneOf(t.stage, PHOTO_STAGES)),
+    check('job_photos_content_type_valid', oneOf(t.contentType, PROFILE_PHOTO_TYPES)),
+    check(
+      'job_photos_size',
+      sql`octet_length(${t.data}) between 1 and ${sql.raw(String(JOB_PHOTO_MAX_BYTES))}`,
+    ),
     index('job_photos_job_idx').on(t.tenantId, t.jobId),
   ],
 )

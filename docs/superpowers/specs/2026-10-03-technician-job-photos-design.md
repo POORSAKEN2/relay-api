@@ -91,7 +91,7 @@ photos live under `work-photos`, so the two never collide:
   - `409 too_many_photos` "You can add up to 6 before photos." (or "after") when that stage is
     full. The job row is locked (`for update`) while counting, so two quick uploads can't both
     take the last place.
-  - `400` "That photo stage isn’t valid" for any other `:stage`.
+  - `400` for any other `:stage`; the message "That photo stage isn’t valid" is in `details.stage`, like every validation error.
 - `DELETE /my-jobs/:jobId/work-photos/:photoId` removes one photo of this job. Removing one that
   is already gone is harmless.
 - `GET /my-jobs/:jobId/work-photos/:photoId` returns the image with `Content-Type`,

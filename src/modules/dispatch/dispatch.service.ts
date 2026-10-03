@@ -60,11 +60,26 @@ export async function getBoard(tenantId: string, date: string) {
   }
 }
 
+// The technician's own photos as the job pages get them: before and after, oldest first.
+// `basePath` is where the image route lives (the office's or the technician's); the web app
+// puts the API's address in front of each `url`.
+export function groupWorkPhotos(
+  photos: { id: string; stage: 'before' | 'after' }[],
+  basePath: string,
+) {
+  const stage = (wanted: 'before' | 'after') =>
+    photos
+      .filter((photo) => photo.stage === wanted)
+      .map((photo) => ({ id: photo.id, url: `${basePath}/${photo.id}` }))
+  return { before: stage('before'), after: stage('after') }
+}
+
 export async function getJob(tenantId: string, jobId: string) {
-  const [job, notes, photos, jobCharges] = await Promise.all([
+  const [job, notes, photos, workPhotos, jobCharges] = await Promise.all([
     queries.findJobDetail(tenantId, jobId),
     queries.listNotes(tenantId, jobId),
     queries.listJobPhotos(tenantId, jobId),
+    queries.listWorkPhotos(tenantId, jobId),
     charges.getCharges(tenantId, jobId),
   ])
   if (!job) throw new HttpError(404, 'not_found', JOB_NOT_FOUND)
@@ -83,6 +98,8 @@ export async function getJob(tenantId: string, jobId: string) {
     notes,
     // `url` is a path under the API; the web app puts the API's address in front.
     photos: photos.map((photo) => ({ id: photo.id, url: `/jobs/${jobId}/photos/${photo.id}` })),
+    // What the technician took at the unit. The office only looks at these.
+    workPhotos: groupWorkPhotos(workPhotos, `/jobs/${jobId}/work-photos`),
     charges: jobCharges,
   }
 }
@@ -90,6 +107,13 @@ export async function getJob(tenantId: string, jobId: string) {
 // A photo the homeowner added while booking this job.
 export async function getJobPhoto(tenantId: string, jobId: string, photoId: string) {
   const photo = await queries.findJobPhoto(tenantId, jobId, photoId)
+  if (!photo) throw new HttpError(404, 'not_found', 'That photo isn’t on this job.')
+  return photo
+}
+
+// A photo the technician took on this visit.
+export async function getWorkPhoto(tenantId: string, jobId: string, photoId: string) {
+  const photo = await queries.findWorkPhoto(tenantId, jobId, photoId)
   if (!photo) throw new HttpError(404, 'not_found', 'That photo isn’t on this job.')
   return photo
 }

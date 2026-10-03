@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { PHOTO_STAGES } from '../../db/schema.ts'
 import { JobParams } from '../dispatch/dispatch.schemas.ts'
 
 // How far away the technician is, in minutes. Running late adds a longer choice.
@@ -32,4 +33,8 @@ export const DecisionInput = z.object({
 
 export const RepairParams = JobParams.extend({
   itemId: z.uuid('That repair isn’t on this job.'),
+})
+
+export const WorkPhotoStageParams = JobParams.extend({
+  stage: z.enum(PHOTO_STAGES, 'That photo stage isn’t valid'),
 })
