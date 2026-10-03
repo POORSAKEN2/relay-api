@@ -147,12 +147,14 @@ export async function listCustomers(
       lastVisitDate: sql<string | null>`(
         select to_char(max(${jobs.completedAt}) at time zone ${tenants.timezone}, 'YYYY-MM-DD')
         from ${jobs}
-        where ${jobs.customerId} = ${customers.id} and ${jobs.status} = 'done'
+        where ${jobs.customerId} = ${customers.id} and ${jobs.tenantId} = ${customers.tenantId}
+          and ${jobs.status} = 'done'
       )`,
       nextVisitDate: sql<string | null>`(
         select to_char(min(${jobs.windowStartsAt}) at time zone ${tenants.timezone}, 'YYYY-MM-DD')
         from ${jobs}
-        where ${jobs.customerId} = ${customers.id} and ${isUpcoming}
+        where ${jobs.customerId} = ${customers.id} and ${jobs.tenantId} = ${customers.tenantId}
+          and ${isUpcoming}
       )`,
     })
     .from(customers)
@@ -219,7 +221,13 @@ function matching(q: string) {
       db
         .select({ id: properties.id })
         .from(properties)
-        .where(and(eq(properties.customerId, customers.id), ilike(properties.street, text))),
+        .where(
+          and(
+            eq(properties.customerId, customers.id),
+            eq(properties.tenantId, customers.tenantId),
+            ilike(properties.street, text),
+          ),
+        ),
     ),
     digits.length >= 3 ? ilike(customers.phone, `%${digits}%`) : undefined,
   )

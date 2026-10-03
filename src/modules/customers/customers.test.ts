@@ -6,6 +6,7 @@ import {
   createShop,
   resetDb,
   type Shop,
+  signInTechnician,
   TUESDAY,
   WEDNESDAY,
 } from '../../../test/helpers.ts'
@@ -24,6 +25,16 @@ function getAs(shop: Shop, path: string) {
 // The names on one page of the list, in order.
 const names = (res: request.Response) =>
   res.body.customers.map((customer: { name: string }) => customer.name)
+
+describe('customer routes for technicians', () => {
+  it('refuse a technician', async () => {
+    const shop = await createShop('desert')
+    const cookie = await signInTechnician(shop.mike)
+
+    await request(app).get('/api/customers').set('Cookie', cookie).expect(403)
+    await request(app).get(`/api/customers/${shop.customer.id}`).set('Cookie', cookie).expect(403)
+  })
+})
 
 describe('GET /api/customers', () => {
   it('lists everyone by name when nothing is typed, with their addresses', async () => {
