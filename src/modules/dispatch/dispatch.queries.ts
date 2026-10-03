@@ -7,6 +7,7 @@ import {
   bookingPhotos,
   customers,
   jobNotes,
+  jobPhotos,
   jobs,
   properties,
   services,
@@ -264,4 +265,47 @@ export async function findJobPhoto(tenantId: string, jobId: string, photoId: str
       ),
     )
   return photo
+}
+
+// The technician's own photos of a job, oldest first, with the stage each belongs to. Shown to
+// the office and to the technician.
+export function listWorkPhotos(tenantId: string, jobId: string, tx: Db = db) {
+  return tx
+    .select({ id: jobPhotos.id, stage: jobPhotos.stage })
+    .from(jobPhotos)
+    .where(and(eq(jobPhotos.tenantId, tenantId), eq(jobPhotos.jobId, jobId)))
+    .orderBy(asc(jobPhotos.createdAt))
+}
+
+export async function insertWorkPhoto(
+  tenantId: string,
+  values: Pick<
+    typeof jobPhotos.$inferInsert,
+    'jobId' | 'stage' | 'contentType' | 'data' | 'uploadedBy'
+  >,
+  tx: Db = db,
+) {
+  const [photo] = await tx
+    .insert(jobPhotos)
+    .values({ tenantId, ...values })
+    .returning({ id: jobPhotos.id })
+  return photo
+}
+
+export async function findWorkPhoto(tenantId: string, jobId: string, photoId: string) {
+  const [photo] = await db
+    .select({ contentType: jobPhotos.contentType, data: jobPhotos.data })
+    .from(jobPhotos)
+    .where(
+      and(eq(jobPhotos.tenantId, tenantId), eq(jobPhotos.jobId, jobId), eq(jobPhotos.id, photoId)),
+    )
+  return photo
+}
+
+export function deleteWorkPhoto(tenantId: string, jobId: string, photoId: string, tx: Db = db) {
+  return tx
+    .delete(jobPhotos)
+    .where(
+      and(eq(jobPhotos.tenantId, tenantId), eq(jobPhotos.jobId, jobId), eq(jobPhotos.id, photoId)),
+    )
 }

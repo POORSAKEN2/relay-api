@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { PHOTO_STAGES } from '../../db/schema.ts'
 import { PropertyInput } from '../customers/customers.schemas.ts'
 import { JobParams } from '../dispatch/dispatch.schemas.ts'
 
@@ -33,6 +34,10 @@ export const DecisionInput = z.object({
 
 export const RepairParams = JobParams.extend({
   itemId: z.uuid('That repair isn’t on this job.'),
+})
+
+export const WorkPhotoStageParams = JobParams.extend({
+  stage: z.enum(PHOTO_STAGES, 'That photo stage isn’t valid'),
 })
 
 // The unit's brand and install year, the whole form: a blank box clears that field.
