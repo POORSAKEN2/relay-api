@@ -85,6 +85,20 @@
       "when": 1791044232658,
       "tag": "0011_sms_outbox",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1791078805007,
+      "tag": "0012_branding_assets",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1791078812457,
+      "tag": "0013_drop_branding_urls",
+      "breakpoints": true
     }
   ]
 }
