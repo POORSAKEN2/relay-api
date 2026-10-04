@@ -1,9 +1,10 @@
-import { and, asc, desc, eq, inArray, isNull, lte, ne, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm'
 import { type Db, db } from '../../db/client.ts'
 import {
   calls,
   consentEvents,
   customers,
+  MESSAGE_MAX_ATTEMPTS,
   type MESSAGE_STATUSES,
   messages,
   phoneNumbers,
@@ -67,6 +68,25 @@ export async function findEmailSender(tenantId: string) {
   return tenant
 }
 
+// Messages the process died sending on their last try: they came back when their lease ran
+// out, but have no try left. Without this they would be claimed forever (and a 4th try breaks
+// the attempts check). Sign-in codes are left to sendText(), which is still sending them.
+export async function failUnfinished(channel: 'sms' | 'email') {
+  await db
+    .update(messages)
+    .set({ status: 'failed', lastError: 'Stopped during its last try' })
+    .where(
+      and(
+        eq(messages.channel, channel),
+        eq(messages.status, 'queued'),
+        isNull(messages.providerMessageId),
+        lte(messages.sendAfter, sql`now()`),
+        ne(messages.kind, 'sign_in_code'),
+        gte(messages.attempts, MESSAGE_MAX_ATTEMPTS),
+      ),
+    )
+}
+
 // Takes up to `limit` texts or emails that are due and counts a try on each. Pushing
 // send_after a minute ahead is the lease: if the process dies mid-send, the message comes back
 // then, and another instance skips rows this one has locked. Sign-in codes are sent by
@@ -82,6 +102,7 @@ export function claimDue(channel: 'sms' | 'email', limit: number) {
         isNull(messages.providerMessageId),
         lte(messages.sendAfter, sql`now()`),
         ne(messages.kind, 'sign_in_code'),
+        lt(messages.attempts, MESSAGE_MAX_ATTEMPTS),
       ),
     )
     .orderBy(messages.sendAfter)

@@ -5,7 +5,7 @@ import { env } from '../../config/env.ts'
 import { db } from '../../db/client.ts'
 import { messages, phoneNumbers } from '../../db/schema.ts'
 import { sendSms } from './httpsms.ts'
-import { sendDueMessages } from './sender.ts'
+import { sendDueMessages, startSender, stopSender } from './sender.ts'
 import { sendMail } from './smtp.ts'
 
 vi.mock('./httpsms.ts', () => ({ sendSms: vi.fn() }))
@@ -226,4 +226,45 @@ it('only logs emails with EMAIL_PROVIDER=log', async () => {
 
   expect(sendMail).not.toHaveBeenCalled()
   expect(await reload(email.id)).toMatchObject({ status: 'sent' })
+})
+
+it('keeps sending texts while Gmail is stuck on an email', async () => {
+  env.EMAIL_PROVIDER = 'smtp'
+  const tenant = await shopWithPhone()
+  await queueEmail(tenant.id)
+  let answerGmail = (_id: string) => {}
+  vi.mocked(sendMail).mockReturnValue(new Promise((resolve) => (answerGmail = resolve)))
+  vi.mocked(sendSms).mockResolvedValue('httpsms-id-1')
+
+  startSender()
+  try {
+    await vi.waitFor(() => expect(sendMail).toHaveBeenCalled())
+    // A missed-call text-back written while the email hangs still leaves within a round.
+    const text = await queueText(tenant.id)
+    await vi.waitFor(
+      async () => expect((await reload(text.id)).providerMessageId).toBe('httpsms-id-1'),
+      { timeout: 8_000, interval: 200 },
+    )
+  } finally {
+    answerGmail('<abc@gmail.com>')
+    await stopSender()
+  }
+}, 15_000)
+
+it('fails a message whose last try never finished, and keeps sending the rest', async () => {
+  const tenant = await shopWithPhone()
+  // The process died during this text's 3rd try: still queued, and due again.
+  const stuck = await queueText(tenant.id, { attempts: 3 })
+  const next = await queueText(tenant.id)
+  vi.mocked(sendSms).mockResolvedValue('httpsms-id-1')
+
+  await sendDueMessages()
+
+  expect(await reload(stuck.id)).toMatchObject({
+    status: 'failed',
+    attempts: 3,
+    lastError: 'Stopped during its last try',
+  })
+  expect(await reload(next.id)).toMatchObject({ providerMessageId: 'httpsms-id-1' })
+  expect(sendSms).toHaveBeenCalledTimes(1)
 })

@@ -19,7 +19,10 @@ export async function sendMail(mail: {
     port: env.SMTP_PORT,
     secure: env.SMTP_PORT === 465,
     auth: { user: env.SMTP_USER, pass: env.SMTP_PASS },
+    // Every wait is capped at 10 seconds (nodemailer's defaults go up to 2 minutes).
     connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    dnsTimeout: 10_000,
     socketTimeout: 10_000,
   })
   const info = await transport.sendMail({

@@ -12,7 +12,10 @@ import { sendMail } from './smtp.ts'
 // at most, and a missed-call text-back must leave within 30 seconds.
 
 const ROUND_MS = 5_000
-const PER_ROUND = 20 // per channel
+const PER_ROUND = 20
+// One email per round: each can take about 30 seconds when the server is slow, and the claim's
+// 1-minute lease must not run out while it waits. Still about 10 a minute, plenty for Gmail.
+const EMAILS_PER_ROUND = 1
 
 export type OutgoingText = { id: string; tenantId: string; contact: string; body: string }
 
@@ -72,8 +75,8 @@ export async function deliverEmail(email: OutgoingEmail, lastTry: boolean) {
     return
   }
 
-  const sender = await queries.findEmailSender(email.tenantId)
   try {
+    const sender = await queries.findEmailSender(email.tenantId)
     const providerId = await sendMail({
       fromName: sender.name,
       to: email.contact,
@@ -93,25 +96,41 @@ export async function deliverEmail(email: OutgoingEmail, lastTry: boolean) {
 // One round: claims the due texts and sends them one by one, then the same for emails.
 // Returns how many it took.
 export async function sendDueMessages() {
+  return (await sendDueTexts()) + (await sendDueEmails())
+}
+
+export async function sendDueTexts() {
+  await queries.failUnfinished('sms')
   const texts = await queries.claimDue('sms', PER_ROUND)
   for (const text of texts) await deliver(text, text.attempts >= MESSAGE_MAX_ATTEMPTS)
-  const emails = await queries.claimDue('email', PER_ROUND)
+  return texts.length
+}
+
+export async function sendDueEmails() {
+  await queries.failUnfinished('email')
+  const emails = await queries.claimDue('email', EMAILS_PER_ROUND)
   for (const email of emails) {
     await deliverEmail(
       { ...email, subject: email.subject ?? '' },
       email.attempts >= MESSAGE_MAX_ATTEMPTS,
     )
   }
-  return texts.length + emails.length
+  return emails.length
 }
 
+// Texts and emails each get their own loop, so a slow or unreachable email server never holds
+// up a text-back.
+type Loop = { send: () => Promise<number>; timer?: NodeJS.Timeout; round: Promise<void> }
+const loops: Loop[] = [
+  { send: sendDueTexts, round: Promise.resolve() },
+  { send: sendDueEmails, round: Promise.resolve() },
+]
 let running = false
-let timer: NodeJS.Timeout | undefined
-let round: Promise<void> = Promise.resolve()
 
 // The next round starts 5 seconds after this one ends, so two never overlap.
-function nextRound() {
-  round = sendDueMessages()
+function nextRound(loop: Loop) {
+  loop.round = loop
+    .send()
     .then(
       () => undefined,
       (error) => {
@@ -120,18 +139,18 @@ function nextRound() {
       },
     )
     .then(() => {
-      if (running) timer = setTimeout(nextRound, ROUND_MS)
+      if (running) loop.timer = setTimeout(() => nextRound(loop), ROUND_MS)
     })
 }
 
 export function startSender() {
   running = true
-  nextRound()
+  for (const loop of loops) nextRound(loop)
 }
 
-// Lets the round in flight finish, so no text is left half-sent.
+// Lets the rounds in flight finish, so no message is left half-sent.
 export async function stopSender() {
   running = false
-  clearTimeout(timer)
-  await round
+  for (const loop of loops) clearTimeout(loop.timer)
+  await Promise.all(loops.map((loop) => loop.round))
 }
