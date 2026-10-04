@@ -18,8 +18,7 @@ supertest, nodemailer.
 
 ## Global Constraints
 
-- Branch `feat/booking-confirmation` in `relay-api` only (no web change), based on
-  `origin/main`.
+- Work on branch `dev-jan` in `relay-api` only (no web change).
 - Lean, plain code a junior developer can debug without AI. Short "why" comments, matching the
   files around them.
 - Commit messages lowercase conventional (`feat: …`, `docs: …`), ending with the
