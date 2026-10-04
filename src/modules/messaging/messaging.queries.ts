@@ -58,16 +58,26 @@ export async function findSendingNumber(tenantId: string) {
   return phone?.number
 }
 
-// Takes up to `limit` texts that are due and counts a try on each. Pushing send_after a minute
-// ahead is the lease: if the process dies mid-send, the text comes back then, and another
-// instance skips rows this one has locked. Sign-in codes are sent by sendText() itself.
-export function claimDueTexts(limit: number) {
+// Who an email is from: the contractor's name, with replies going to their own email.
+export async function findEmailSender(tenantId: string) {
+  const [tenant] = await db
+    .select({ name: tenants.name, contactEmail: tenants.contactEmail })
+    .from(tenants)
+    .where(eq(tenants.id, tenantId))
+  return tenant
+}
+
+// Takes up to `limit` texts or emails that are due and counts a try on each. Pushing
+// send_after a minute ahead is the lease: if the process dies mid-send, the message comes back
+// then, and another instance skips rows this one has locked. Sign-in codes are sent by
+// sendText() itself.
+export function claimDue(channel: 'sms' | 'email', limit: number) {
   const due = db
     .select({ id: messages.id })
     .from(messages)
     .where(
       and(
-        eq(messages.channel, 'sms'),
+        eq(messages.channel, channel),
         eq(messages.status, 'queued'),
         isNull(messages.providerMessageId),
         lte(messages.sendAfter, sql`now()`),
@@ -88,6 +98,7 @@ export function claimDueTexts(limit: number) {
       id: messages.id,
       tenantId: messages.tenantId,
       contact: messages.contact,
+      subject: messages.subject,
       body: messages.body,
       attempts: messages.attempts,
     })
@@ -104,6 +115,14 @@ export async function markHandedOver(messageId: string, providerMessageId: strin
 // Only the 'log' provider: nothing will report back, so it counts as sent at once.
 export async function markLogged(messageId: string) {
   await db.update(messages).set({ status: 'sent' }).where(eq(messages.id, messageId))
+}
+
+// The email server took it. Email has no webhook, so this is final.
+export async function markEmailSent(messageId: string, providerMessageId: string) {
+  await db
+    .update(messages)
+    .set({ status: 'sent', providerMessageId, lastError: null })
+    .where(eq(messages.id, messageId))
 }
 
 export async function recordSendError(messageId: string, error: string) {
