@@ -18,7 +18,7 @@ export function listServices(tenantId: string) {
   return queries.listActiveServices(tenantId)
 }
 
-type Reserve = { allowOverCap: boolean; excludeJobId?: string }
+type Reserve = { allowOverCap: boolean; excludeJobId?: string; excludeOfferId?: string }
 
 // Checks that `windowId` can take one more job on local day `date` and returns the job's real
 // start and end. Must run inside a transaction: it locks the window until the transaction
@@ -29,7 +29,7 @@ export async function reserveWindow(
   tenantId: string,
   windowId: string,
   date: string,
-  { allowOverCap, excludeJobId }: Reserve,
+  { allowOverCap, excludeJobId, excludeOfferId }: Reserve,
 ) {
   const window = await queries.lockWindow(tenantId, windowId, date, tx)
   if (!window) {
@@ -49,7 +49,10 @@ export async function reserveWindow(
       `The ${label} window isn’t offered on ${weekdaysLabel(weekday)}. Pick another window.`,
     )
   }
-  const booked = await queries.countActiveJobsAt(tenantId, window.windowStartsAt, excludeJobId, tx)
+  // Jobs, plus places held for a homeowner from the waitlist.
+  const booked =
+    (await queries.countActiveJobsAt(tenantId, window.windowStartsAt, excludeJobId, tx)) +
+    (await queries.countOpenOffersAt(tenantId, window.windowStartsAt, excludeOfferId, tx))
   if (booked >= window.jobCap && !allowOverCap) {
     throw new HttpError(
       409,

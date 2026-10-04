@@ -433,16 +433,22 @@ async function recordConsent(
 // Takes a place in the window like the office does, but never over the cap, never in a window
 // that already started, and without telling a homeowner how many jobs are booked.
 // `excludeJobId`: a visit being moved doesn't count against its own new window.
+// `excludeOfferId`: nor does a place held for the homeowner booking from that offer.
 export async function reserveOpenWindow(
   tx: Tx,
   tenantId: string,
   windowId: string,
   date: string,
   excludeJobId?: string,
+  excludeOfferId?: string,
 ) {
   let slot: Awaited<ReturnType<typeof reserveWindow>>
   try {
-    slot = await reserveWindow(tx, tenantId, windowId, date, { allowOverCap: false, excludeJobId })
+    slot = await reserveWindow(tx, tenantId, windowId, date, {
+      allowOverCap: false,
+      excludeJobId,
+      excludeOfferId,
+    })
   } catch (error) {
     if (error instanceof HttpError && error.code === 'window_full') {
       throw new HttpError(

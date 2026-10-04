@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import { eq, sql } from 'drizzle-orm'
 import request from 'supertest'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -6,6 +7,7 @@ import { createApp } from '../../app.ts'
 import { db } from '../../db/client.ts'
 import { arrivalWindows, serviceAreaZips, tenants, waitlistEntries } from '../../db/schema.ts'
 import { weekdayOf } from '../../lib/labels.ts'
+import { hashLinkToken } from '../../lib/link-token.ts'
 
 vi.mock('../../realtime/index.ts', () => ({ emitToTenant: vi.fn() }))
 
@@ -102,6 +104,44 @@ function entries() {
   return db.select().from(waitlistEntries).orderBy(waitlistEntries.createdAt)
 }
 
+function bookingBody(shop: WaitlistShop, overrides: Record<string, unknown> = {}) {
+  return {
+    serviceId: shop.service.id,
+    date: shop.soon,
+    windowId: shop.window.id,
+    problem: 'No cooling since last night',
+    systemType: 'central_ac',
+    name: 'Sam Reed',
+    phone: '(480) 555-0199',
+    street: '4 Cactus Rd',
+    city: 'Mesa',
+    state: 'az',
+    zip: '85201',
+    consent: true,
+    ...overrides,
+  }
+}
+
+// An open offer straight in the database, for the hold's tests (before the job exists).
+async function insertOffer(shop: WaitlistShop, date: string, expiresInMinutes = 30) {
+  const [entry] = await db
+    .insert(waitlistEntries)
+    .values({
+      tenantId: shop.tenant.id,
+      customerId: shop.customer.id,
+      serviceId: shop.service.id,
+      zip: '85201',
+      status: 'offered',
+      offerWindowId: shop.window.id,
+      offerDate: date,
+      offerWindowStartsAt: await localMoment(shop.timezone, date, '08:00'),
+      offerExpiresAt: new Date(Date.now() + expiresInMinutes * 60_000),
+      offerLinkHash: hashLinkToken(randomBytes(18).toString('base64url')),
+    })
+    .returning()
+  return entry
+}
+
 describe('waitlist_entries', () => {
   it('gives a new entry 14 days and no missed offers', async () => {
     const shop = await createWaitlistShop()
@@ -124,5 +164,30 @@ describe('waitlist_entries', () => {
         status: 'offered',
       }),
     ).rejects.toMatchObject({ cause: { constraint: 'waitlist_entries_offer_complete' } })
+  })
+})
+
+describe('the hold', () => {
+  it('hides a held place from the calendar', async () => {
+    const shop = await createWaitlistShop()
+    await insertOffer(shop, shop.soon)
+
+    const res = await get('windows').expect(200)
+    expect(res.body.days.map((day: { date: string }) => day.date)).toEqual([shop.later])
+  })
+
+  it('refuses to book a held place for anyone else', async () => {
+    const shop = await createWaitlistShop()
+    await insertOffer(shop, shop.soon)
+
+    const res = await post('bookings', bookingBody(shop)).expect(409)
+    expect(res.body.error.code).toBe('window_full')
+  })
+
+  it('frees the place the moment the offer runs out', async () => {
+    const shop = await createWaitlistShop()
+    await insertOffer(shop, shop.soon, -1)
+
+    await post('bookings', bookingBody(shop)).expect(201)
   })
 })
