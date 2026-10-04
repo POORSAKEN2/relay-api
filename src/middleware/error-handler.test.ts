@@ -54,3 +54,14 @@ it('hides the details of an unexpected error behind a 500', async () => {
   })
   expect(JSON.stringify(res.body)).not.toContain('hunter2')
 })
+
+// A browser may keep a 404 or 410 on its own and replay it later, so a contractor suspended
+// for a minute would show "not taking bookings" long after coming back.
+it('tells browsers never to keep an error', async () => {
+  for (const path of ['/not-found', '/crash']) {
+    const res = await request(app).get(path)
+    expect(res.headers['cache-control']).toBe('no-store')
+  }
+  const invalid = await request(app).post('/validate').send({ address: {} })
+  expect(invalid.headers['cache-control']).toBe('no-store')
+})
