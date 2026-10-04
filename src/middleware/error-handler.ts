@@ -5,6 +5,9 @@ import { logger } from '../lib/logger.ts'
 
 // Every error response has the shape { error: { code, message, details?, requestId? } }.
 export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
+  // An error is only true right now. Browsers may keep some (404, 410) on their own, and a
+  // contractor suspended for a minute would then look closed long after coming back.
+  res.set('Cache-Control', 'no-store')
   if (err instanceof ZodError) {
     res.status(400).json({
       error: {
