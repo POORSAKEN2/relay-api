@@ -17,6 +17,7 @@ export default defineConfig({
       LOG_LEVEL: 'silent',
       SENTRY_DSN: '',
       SMS_PROVIDER: 'log', // tests never send a real text, whatever .env says
+      EMAIL_PROVIDER: 'log', // tests never send a real email, whatever .env says
     },
     globalSetup: './test/global-setup.ts',
     fileParallelism: false, // test files share one database

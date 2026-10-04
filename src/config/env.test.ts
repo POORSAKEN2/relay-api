@@ -14,6 +14,9 @@ it('fills in defaults', () => {
     PORT: 3000,
     LOG_LEVEL: 'info',
     SMS_PROVIDER: 'log',
+    EMAIL_PROVIDER: 'log',
+    SMTP_HOST: 'smtp.gmail.com',
+    SMTP_PORT: 465,
   })
 })
 
@@ -40,4 +43,17 @@ it('needs both httpSMS keys to send real texts', () => {
   )
   const keys = { HTTPSMS_API_KEY: 'key', HTTPSMS_WEBHOOK_SIGNING_KEY: 'signing' }
   expect(parseEnv({ ...required, SMS_PROVIDER: 'httpsms', ...keys }).SMS_PROVIDER).toBe('httpsms')
+})
+
+it('needs the Gmail address and app password to send real emails', () => {
+  expect(() => parseEnv({ ...required, EMAIL_PROVIDER: 'smtp' })).toThrow(/SMTP_USER/)
+  expect(() => parseEnv({ ...required, EMAIL_PROVIDER: 'smtp' })).toThrow(/SMTP_PASS/)
+  const gmail = { SMTP_USER: 'relay.demo@gmail.com', SMTP_PASS: 'abcdefghijklmnop' }
+  expect(parseEnv({ ...required, EMAIL_PROVIDER: 'smtp', ...gmail }).EMAIL_PROVIDER).toBe('smtp')
+})
+
+it('takes the app password as Google shows it, with spaces', () => {
+  expect(parseEnv({ ...required, SMTP_PASS: 'abcd efgh ijkl mnop' }).SMTP_PASS).toBe(
+    'abcdefghijklmnop',
+  )
 })

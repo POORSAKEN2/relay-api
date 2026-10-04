@@ -22,16 +22,33 @@ const EnvSchema = z
       .string()
       .regex(/^\+[1-9]\d{7,14}$/)
       .optional(),
+    // 'log' sends nothing: emails are logged (printed in development). 'smtp' really sends,
+    // through Gmail for the demo (docs/gmail-setup.md).
+    EMAIL_PROVIDER: z.enum(['log', 'smtp']).default('log'),
+    SMTP_HOST: z.string().min(1).default('smtp.gmail.com'),
+    SMTP_PORT: z.coerce.number().int().positive().default(465),
+    SMTP_USER: z.email().optional(), // the Gmail address emails are sent from
+    // A Gmail app password. Google shows it in groups of four with spaces; they don't count.
+    SMTP_PASS: z
+      .string()
+      .transform((value) => value.replace(/\s/g, ''))
+      .pipe(z.string().min(1))
+      .optional(),
   })
   .superRefine((env, ctx) => {
-    if (env.SMS_PROVIDER !== 'httpsms') return
-    for (const name of ['HTTPSMS_API_KEY', 'HTTPSMS_WEBHOOK_SIGNING_KEY'] as const) {
-      if (!env[name])
-        ctx.addIssue({
-          code: 'custom',
-          path: [name],
-          message: 'Required with SMS_PROVIDER=httpsms',
-        })
+    const needs = (names: (keyof typeof env)[], why: string) => {
+      for (const name of names) {
+        if (!env[name]) ctx.addIssue({ code: 'custom', path: [name], message: why })
+      }
+    }
+    if (env.SMS_PROVIDER === 'httpsms') {
+      needs(
+        ['HTTPSMS_API_KEY', 'HTTPSMS_WEBHOOK_SIGNING_KEY'],
+        'Required with SMS_PROVIDER=httpsms',
+      )
+    }
+    if (env.EMAIL_PROVIDER === 'smtp') {
+      needs(['SMTP_USER', 'SMTP_PASS'], 'Required with EMAIL_PROVIDER=smtp')
     }
   })
 
