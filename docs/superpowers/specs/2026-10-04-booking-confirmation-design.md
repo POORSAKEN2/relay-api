@@ -1,6 +1,6 @@
 # Booking confirmation: a text and an email after an online booking
 
-Date: 2026-10-04. Status: draft. Plan: `docs/superpowers/plans/2026-10-04-booking-confirmation.md`.
+Date: 2026-10-04. Status: approved. Plan: `docs/superpowers/plans/2026-10-04-booking-confirmation.md`.
 
 ## Problem
 
@@ -46,15 +46,16 @@ Kind `booking_confirmation`: consent required, not held for quiet hours (rule `V
 for every other kind; `bookVisit()` doesn't check consent itself.
 
 ```
-Desert Breeze Air: you're booked for AC Repair on Tue, Oct 6, 8:00 AM - 10:00 AM at
-123 Main St. Pay at the visit. Reply STOP to opt out.
+Desert Breeze Air: you're booked for AC Repair on Tue, Oct 6, 8 AM - 12 PM at
+123 Main St, Unit 4. Pay at the visit. Reply STOP to opt out.
 ```
 
-- `<tenant name>: you're booked for <service> on <day>, <window> at <street>[ <unit>]. Pay at
+- `<tenant name>: you're booked for <service> on <day>, <window> at <street>[, <unit>]. Pay at
   the visit. Reply STOP to opt out.`
 - Plain GSM characters only (see the SMS spec): `'` not `’`, and the window joined with
-  ` - `, not the en dash `formatWindow()` uses for screens. A new `textWindow()` beside
-  `formatWindow()` in `src/lib/labels.ts` returns `8:00 AM - 10:00 AM`.
+  ` - `, not the en dash `formatWindow()` uses for screens. A new `textWindow(startsAt, endsAt, timezone)` beside
+  `formatWindow()` in `src/lib/labels.ts` returns `8 AM - 12 PM` from the job's window, using
+  `formatClock()`.
 - Street only, not city and ZIP: the homeowner knows where they live, and it keeps the text
   inside two SMS parts.
 - `jobId` and `customerId` are set on the row.
@@ -77,7 +78,7 @@ Hi Maria,
 Your visit with Desert Breeze Air is booked.
 
 Service: AC Repair
-Arrival window: Tue, Oct 6, 8:00 AM - 10:00 AM
+Arrival window: Tue, Oct 6, 8 AM - 12 PM
 Address: 123 Main St, Unit 4, Phoenix, AZ 85001
 Priority service: $49.00, paid at the visit
 
@@ -90,7 +91,8 @@ Desert Breeze Air
 
 - First name: the text before the first space of `input.name`.
 - The `Unit` part is left out when there is no unit; the `Priority service` line is left out
-  when the fee is 0. The fee uses the tenant's currency.
+  when the fee is 0. The fee uses the tenant's currency, through a new `formatMoney(cents,
+  currency)` in `src/lib/labels.ts`.
 - The phone is the tenant's `contactPhone`, shown with a new `formatPhone()` in
   `src/lib/labels.ts` that matches the web app's: `+639171234567` → `0917 123 4567`,
   `+14805550199` → `(480) 555-0199`, anything else as stored.
@@ -105,7 +107,9 @@ confirmationEmail(v: Confirmation): { subject: string; body: string }
 ```
 
 `Confirmation` holds what both need: tenant name, contact phone, currency, customer name,
-service name, day label, window start and end, street, unit, city, state, zip, priority fee.
+service name, day label, window label (`textWindow()`), street, unit, city, state, zip,
+priority fee. Curly quotes and dashes typed into the contractor's or service's name are turned
+into plain ones in the text (`plainText()`), so a name never switches it to Unicode.
 `bookVisit()` gathers these (`findActiveService` in `booking.queries.ts` also returns the
 service's `name`) and calls `sendText()` and
 `sendEmail()` with the results.
@@ -164,7 +168,7 @@ No provider interface: moving to a real email service later means replacing this
 | `SMTP_HOST` | Default `smtp.gmail.com`. |
 | `SMTP_PORT` | Default `465`. |
 | `SMTP_USER` | The Gmail address. Required when `EMAIL_PROVIDER=smtp`. |
-| `SMTP_PASS` | A Gmail **app password** (Google account → Security → 2-Step Verification → App passwords), not the account password. Required when `EMAIL_PROVIDER=smtp`. |
+| `SMTP_PASS` | A Gmail **app password** (Google account → Security → 2-Step Verification → App passwords), not the account password. Spaces are removed, since Google shows it as `abcd efgh ijkl mnop`. Required when `EMAIL_PROVIDER=smtp`. |
 
 `.env.example` gains the same lines. `docs/gmail-setup.md` explains making the app password,
 like `docs/httpsms-setup.md`.
