@@ -193,6 +193,7 @@ export async function lockJob(tenantId: string, jobId: string, tx: Tx) {
       id: jobs.id,
       status: jobs.status,
       technicianId: jobs.technicianId,
+      windowStartsAt: jobs.windowStartsAt,
       date: local(jobs.windowStartsAt, 'YYYY-MM-DD'),
       windowId: arrivalWindows.id,
     })

@@ -3,12 +3,14 @@ import { rateLimit } from 'express-rate-limit'
 import { HttpError } from '../../lib/http-error.ts'
 import { sendPhoto } from '../../lib/send-photo.ts'
 import { tenantFromHost } from '../../middleware/tenant.ts'
+import * as manage from './manage.service.ts'
 import {
   BookingInput,
   CallbackInput,
   DraftAnswersInput,
   DraftInput,
   PhotoParams,
+  RescheduleInput,
   WaitlistInput,
   ZipParams,
 } from './online-booking.schemas.ts'
@@ -152,5 +154,34 @@ onlineBookingRoutes.post(
   async (req, res) => {
     const input = BookingInput.parse(req.body)
     res.status(201).json(await onlineBooking.bookVisit(req.tenant!, input, req.ip ?? null))
+  },
+)
+
+// The homeowner's link from their confirmation: see, move or cancel the visit.
+onlineBookingRoutes.get(
+  '/online-booking/manage/:token',
+  formLimit,
+  tenantFromHost,
+  async (req, res) => {
+    res.json(await manage.getVisit(req.tenant!, String(req.params.token)))
+  },
+)
+
+onlineBookingRoutes.post(
+  '/online-booking/manage/:token/reschedule',
+  formLimit,
+  tenantFromHost,
+  async (req, res) => {
+    const input = RescheduleInput.parse(req.body)
+    res.json(await manage.rescheduleVisit(req.tenant!, String(req.params.token), input))
+  },
+)
+
+onlineBookingRoutes.post(
+  '/online-booking/manage/:token/cancel',
+  formLimit,
+  tenantFromHost,
+  async (req, res) => {
+    res.json(await manage.cancelVisit(req.tenant!, String(req.params.token)))
   },
 )

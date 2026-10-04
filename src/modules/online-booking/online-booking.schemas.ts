@@ -73,3 +73,10 @@ export const BookingInput = z.object({
 export type BookingInput = z.infer<typeof BookingInput>
 
 export const PhotoParams = z.object({ photoId: z.uuid('That photo link isn’t valid') })
+
+// The manage page: a new arrival window for a booked visit.
+export const RescheduleInput = z.object({
+  date: LocalDate,
+  windowId: z.uuid('Pick an arrival window'),
+})
+export type RescheduleInput = z.infer<typeof RescheduleInput>
