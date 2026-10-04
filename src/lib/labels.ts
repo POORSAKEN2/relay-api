@@ -26,6 +26,19 @@ export function formatTime(time: string): string {
   return minutes ? `${hour}:${String(minutes).padStart(2, '0')} ${suffix}` : `${hour} ${suffix}`
 }
 
+// A moment as the contractor's wall clock, '9:10 AM' or '12 PM', for times worked out in code
+// (an arrival time) rather than read from the database already in local time.
+export function formatClock(at: Date, timezone: string): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(at)
+  const part = (type: string) => parts.find((p) => p.type === type)?.value ?? '00'
+  return formatTime(`${part('hour')}:${part('minute')}:00`)
+}
+
 // '8 AM–12 PM'
 export function formatWindow(startsAt: string, endsAt: string): string {
   return `${formatTime(startsAt)}–${formatTime(endsAt)}`
@@ -34,6 +47,18 @@ export function formatWindow(startsAt: string, endsAt: string): string {
 // '2030-01-08' → 'Tue, Jan 8'
 export function formatDay(date: string): string {
   return dayFormat.format(new Date(`${date}T00:00:00Z`))
+}
+
+const dateFormat = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+  timeZone: 'UTC',
+})
+
+// '2030-01-08' → 'Jan 8, 2030'. For history, where the year matters.
+export function formatDate(date: string): string {
+  return dateFormat.format(new Date(`${date}T00:00:00Z`))
 }
 
 // 0 → 'Sundays'

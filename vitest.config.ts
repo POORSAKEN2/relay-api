@@ -13,8 +13,10 @@ export default defineConfig({
       NODE_ENV: 'test',
       APP_DOMAIN: 'localhost',
       DATABASE_URL: process.env.TEST_DATABASE_URL ?? '',
+      SIGN_IN_CODE_SECRET: 'test-only-sign-in-code-secret-0123456789',
       LOG_LEVEL: 'silent',
       SENTRY_DSN: '',
+      SMS_PROVIDER: 'log', // tests never send a real text, whatever .env says
     },
     globalSetup: './test/global-setup.ts',
     fileParallelism: false, // test files share one database

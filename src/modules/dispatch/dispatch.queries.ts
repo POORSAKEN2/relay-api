@@ -7,6 +7,7 @@ import {
   bookingPhotos,
   customers,
   jobNotes,
+  jobPhotos,
   jobs,
   properties,
   services,
@@ -21,8 +22,15 @@ import { INACTIVE_STATUSES } from '../booking/booking.queries.ts'
 const technicians = alias(users, 'technicians')
 const authors = alias(users, 'authors')
 
-function local(column: PgColumn, format: string): SQL<string> {
+// A timestamp as the contractor's wall clock, e.g. 'YYYY-MM-DD' or 'HH24:MI:SS'. Needs
+// `tenants` joined. Also used by the technician job list.
+export function local(column: PgColumn, format: string): SQL<string> {
   return sql<string>`to_char(${column} at time zone ${tenants.timezone}, ${format})`
+}
+
+// Like local(), for a column that may be empty: null stays null.
+export function localOrNull(column: PgColumn, format: string): SQL<string | null> {
+  return sql<string | null>`to_char(${column} at time zone ${tenants.timezone}, ${format})`
 }
 
 // The arrival window a job sits in: same weekday and same local start time. A job whose
@@ -91,6 +99,7 @@ export function listJobsOn(tenantId: string, date: string) {
       windowId: arrivalWindows.id,
       localStart: local(jobs.windowStartsAt, 'HH24:MI:SS'),
       localEnd: local(jobs.windowEndsAt, 'HH24:MI:SS'),
+      etaLocal: localOrNull(jobs.etaAt, 'HH24:MI:SS'), // set by "On my way" / "Running late"
       customerName: customers.name,
       city: properties.city,
       serviceName: services.name,
@@ -126,6 +135,8 @@ export async function findJobDetail(tenantId: string, jobId: string) {
       date: local(jobs.windowStartsAt, 'YYYY-MM-DD'),
       localStart: local(jobs.windowStartsAt, 'HH24:MI:SS'),
       localEnd: local(jobs.windowEndsAt, 'HH24:MI:SS'),
+      etaLocal: localOrNull(jobs.etaAt, 'HH24:MI:SS'),
+      completedLocal: localOrNull(jobs.completedAt, 'HH24:MI:SS'),
       windowId: arrivalWindows.id,
       technicianId: technicians.id,
       technicianName: technicians.name,
@@ -193,6 +204,38 @@ export async function lockJob(tenantId: string, jobId: string, tx: Tx) {
   return job
 }
 
+// What the technician's "job assigned" / "job changed" text says: who, which job, when, and
+// the contractor's address for the link.
+export async function findAssignmentText(
+  tenantId: string,
+  jobId: string,
+  technicianId: string,
+  tx: Db,
+) {
+  const [row] = await tx
+    .select({
+      tenant: {
+        slug: tenants.slug,
+        customDomain: tenants.customDomain,
+        customDomainVerifiedAt: tenants.customDomainVerifiedAt,
+      },
+      contractorName: tenants.name,
+      technicianPhone: users.phone,
+      serviceName: services.name,
+      city: properties.city,
+      date: local(jobs.windowStartsAt, 'YYYY-MM-DD'),
+      localStart: local(jobs.windowStartsAt, 'HH24:MI:SS'),
+      localEnd: local(jobs.windowEndsAt, 'HH24:MI:SS'),
+    })
+    .from(jobs)
+    .innerJoin(tenants, eq(tenants.id, jobs.tenantId))
+    .innerJoin(properties, eq(properties.id, jobs.propertyId))
+    .innerJoin(services, eq(services.id, jobs.serviceId))
+    .innerJoin(users, and(eq(users.tenantId, jobs.tenantId), eq(users.id, technicianId)))
+    .where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, jobId)))
+  return row
+}
+
 export async function jobExists(tenantId: string, jobId: string) {
   const [job] = await db
     .select({ id: jobs.id })
@@ -216,8 +259,9 @@ export async function updateJob(
 export async function insertNote(
   tenantId: string,
   values: { jobId: string; authorId: string; body: string },
+  tx: Db = db,
 ) {
-  const [note] = await db
+  const [note] = await tx
     .insert(jobNotes)
     .values({ ...values, tenantId })
     .returning({ id: jobNotes.id, body: jobNotes.body, createdAt: jobNotes.createdAt })
@@ -253,4 +297,47 @@ export async function findJobPhoto(tenantId: string, jobId: string, photoId: str
       ),
     )
   return photo
+}
+
+// The technician's own photos of a job, oldest first, with the stage each belongs to. Shown to
+// the office and to the technician.
+export function listWorkPhotos(tenantId: string, jobId: string, tx: Db = db) {
+  return tx
+    .select({ id: jobPhotos.id, stage: jobPhotos.stage })
+    .from(jobPhotos)
+    .where(and(eq(jobPhotos.tenantId, tenantId), eq(jobPhotos.jobId, jobId)))
+    .orderBy(asc(jobPhotos.createdAt))
+}
+
+export async function insertWorkPhoto(
+  tenantId: string,
+  values: Pick<
+    typeof jobPhotos.$inferInsert,
+    'jobId' | 'stage' | 'contentType' | 'data' | 'uploadedBy'
+  >,
+  tx: Db = db,
+) {
+  const [photo] = await tx
+    .insert(jobPhotos)
+    .values({ tenantId, ...values })
+    .returning({ id: jobPhotos.id })
+  return photo
+}
+
+export async function findWorkPhoto(tenantId: string, jobId: string, photoId: string) {
+  const [photo] = await db
+    .select({ contentType: jobPhotos.contentType, data: jobPhotos.data })
+    .from(jobPhotos)
+    .where(
+      and(eq(jobPhotos.tenantId, tenantId), eq(jobPhotos.jobId, jobId), eq(jobPhotos.id, photoId)),
+    )
+  return photo
+}
+
+export function deleteWorkPhoto(tenantId: string, jobId: string, photoId: string, tx: Db = db) {
+  return tx
+    .delete(jobPhotos)
+    .where(
+      and(eq(jobPhotos.tenantId, tenantId), eq(jobPhotos.jobId, jobId), eq(jobPhotos.id, photoId)),
+    )
 }

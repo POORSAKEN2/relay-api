@@ -1,5 +1,4 @@
 import { randomBytes } from 'node:crypto'
-import { env } from '../../config/env.ts'
 import { type Db, db, type Tx } from '../../db/client.ts'
 import {
   BOOKING_PHOTO_MAX_BYTES,
@@ -10,10 +9,11 @@ import {
 import { HttpError } from '../../lib/http-error.ts'
 import { photoTypeOf } from '../../lib/image-type.ts'
 import { formatDay, formatWindow } from '../../lib/labels.ts'
+import { tenantUrl } from '../../lib/tenant-url.ts'
 import { emitToTenant } from '../../realtime/index.ts'
 import * as audit from '../audit/audit.queries.ts'
 import * as booking from '../booking/booking.queries.ts'
-import { reserveWindow } from '../booking/booking.service.ts'
+import { insertBookedJob, reserveWindow } from '../booking/booking.service.ts'
 import * as customers from '../customers/customers.queries.ts'
 import { sendText } from '../messaging/sms.ts'
 import { zipIsServed } from '../settings/settings.queries.ts'
@@ -264,7 +264,7 @@ export async function bookVisit(tenant: Tenant, input: BookingInput, ip: string 
         tx,
       ))
 
-    const job = await booking.insertJob(
+    const job = await insertBookedJob(
       tenant.id,
       {
         customerId: customer.id,
@@ -348,18 +348,12 @@ export async function sendRecoveryTexts() {
   return drafts.length
 }
 
-// The address of a contractor's booking page that opens a draft: their own domain once it is
-// verified, else their subdomain. Always https with no port, which is wrong on a developer's
-// machine; fine while texts are only saved (docs/real-texting-todo.md).
+// The address of a contractor's booking page that opens a draft.
 function bookingLink(
   tenant: { slug: string; customDomain: string | null; customDomainVerifiedAt: Date | null },
   token: string,
 ) {
-  const host =
-    tenant.customDomain && tenant.customDomainVerifiedAt
-      ? tenant.customDomain
-      : `${tenant.slug}.${env.APP_DOMAIN}`
-  return `https://${host}/?resume=${token}`
+  return tenantUrl(tenant, `/?resume=${token}`)
 }
 
 async function checkServiceAndZip(tenantId: string, serviceId: string, zip: string, tx: Db) {
@@ -424,14 +418,16 @@ async function reserveOpenWindow(tx: Tx, tenantId: string, windowId: string, dat
   return slot
 }
 
-// A homeowner who booked or called before keeps one customer record, matched by phone.
+// A homeowner who booked or called before keeps one customer record, matched by phone and
+// name. Someone else on the same phone (a shared household number) gets their own record, so
+// each job shows who booked it.
 async function findOrAddCustomer(
   tenantId: string,
   input: { name: string; phone: string; email?: string },
   tx: Db,
 ) {
   return (
-    (await customers.findCustomerByPhone(tenantId, input.phone, tx)) ??
+    (await customers.findCustomerByPhoneAndName(tenantId, input.phone, input.name, tx)) ??
     (await customers.insertCustomer(
       tenantId,
       { name: input.name, phone: input.phone, email: input.email, source: 'booking' },

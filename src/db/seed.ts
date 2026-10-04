@@ -2,7 +2,7 @@ import { sql } from 'drizzle-orm'
 import { env } from '../config/env.ts'
 import { hashPassword } from '../modules/accounts/passwords.ts'
 import { db, pool } from './client.ts'
-import { tenants, users } from './schema.ts'
+import { phoneNumbers, tenants, users } from './schema.ts'
 import { seedDispatch } from './seed-dispatch.ts'
 
 // Resets the development database to demo data: one contractor, Desert Breeze Air, whose own
@@ -21,11 +21,17 @@ const [desert] = await db
   .values({
     slug: 'desert',
     name: 'Desert Breeze Air',
-    timezone: 'America/Phoenix',
+    // The demo runs in the Philippines: windows and quiet hours follow Manila time.
+    timezone: 'Asia/Manila',
     contactEmail: 'office@desert.test',
     contactPhone: '+16025550142', // the number on contractor-site
   })
   .returning()
+
+// The Android phone running httpSMS, when there is one. Texts go out from it.
+if (env.SEED_SMS_NUMBER) {
+  await db.insert(phoneNumbers).values({ tenantId: desert.id, number: env.SEED_SMS_NUMBER })
+}
 
 await db.insert(users).values([
   { email: 'admin@relay.test', name: 'Relay Admin', role: 'superadmin', passwordHash },

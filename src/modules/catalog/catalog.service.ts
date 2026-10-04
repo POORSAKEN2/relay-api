@@ -5,7 +5,7 @@ import type { SessionUser } from '../accounts/accounts.service.ts'
 import * as audit from '../audit/audit.queries.ts'
 import { tenantOf } from '../booking/booking.service.ts'
 import * as queries from './catalog.queries.ts'
-import type { ServiceInput } from './catalog.schemas.ts'
+import type { PriceItemInput, ServiceInput } from './catalog.schemas.ts'
 
 // Owner and office staff manage the services their contractor offers. Services are never
 // deleted: archiving takes one off booking and keeps it on past jobs.
@@ -106,4 +106,72 @@ async function changed(user: SessionUser, action: string, serviceId: string) {
 function found(row: ServiceRow | undefined) {
   if (!row) throw new HttpError(404, 'not_found', NOT_ON_LIST)
   return toService(row)
+}
+
+// The repair price list. Technicians add these to a job; the homeowner approves the price.
+// Prices are never deleted: archiving takes one off the technician's list and keeps it on
+// jobs that used it.
+
+const PRICE_NOT_ON_LIST = 'That price isn’t on your list.'
+
+type PriceItemRow = NonNullable<Awaited<ReturnType<typeof queries.findPriceItem>>>
+
+function toPriceItem({ archivedAt, ...row }: PriceItemRow) {
+  return { ...row, archived: archivedAt !== null }
+}
+
+export async function listPriceItems(tenantId: string) {
+  return (await queries.listPriceItems(tenantId)).map(toPriceItem)
+}
+
+export function listActivePriceItems(tenantId: string) {
+  return queries.listActivePriceItems(tenantId)
+}
+
+export async function addPriceItem(user: SessionUser, input: PriceItemInput) {
+  const item = await queries.insertPriceItem(tenantOf(user), input)
+  await priceChanged(user, 'price_item.added', item.id)
+  return toPriceItem(item)
+}
+
+export async function updatePriceItem(
+  user: SessionUser,
+  priceItemId: string,
+  input: PriceItemInput,
+) {
+  const item = await queries.updatePriceItem(tenantOf(user), priceItemId, input)
+  if (!item) throw new HttpError(404, 'not_found', PRICE_NOT_ON_LIST)
+  await priceChanged(user, 'price_item.updated', priceItemId)
+  return toPriceItem(item)
+}
+
+// Doing it twice is harmless.
+export async function archivePriceItem(user: SessionUser, priceItemId: string) {
+  const tenantId = tenantOf(user)
+  const item = await queries.archivePriceItem(tenantId, priceItemId)
+  if (!item) return foundPrice(await queries.findPriceItem(tenantId, priceItemId))
+  await priceChanged(user, 'price_item.archived', priceItemId)
+  return toPriceItem(item)
+}
+
+export async function restorePriceItem(user: SessionUser, priceItemId: string) {
+  const tenantId = tenantOf(user)
+  const item = await queries.restorePriceItem(tenantId, priceItemId)
+  if (!item) return foundPrice(await queries.findPriceItem(tenantId, priceItemId))
+  await priceChanged(user, 'price_item.restored', priceItemId)
+  return toPriceItem(item)
+}
+
+async function priceChanged(user: SessionUser, action: string, priceItemId: string) {
+  await audit.insertUserAction(tenantOf(user), {
+    actorUserId: user.id,
+    action,
+    entityType: 'price_item',
+    entityId: priceItemId,
+  })
+}
+
+function foundPrice(row: PriceItemRow | undefined) {
+  if (!row) throw new HttpError(404, 'not_found', PRICE_NOT_ON_LIST)
+  return toPriceItem(row)
 }

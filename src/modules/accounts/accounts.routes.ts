@@ -7,11 +7,13 @@ import {
   readSessionToken,
   setSessionCookie,
 } from '../../middleware/auth.ts'
-import { SignInInput } from './accounts.schemas.ts'
+import { PhoneCodeInput, PhoneSignInInput, SignInInput } from './accounts.schemas.ts'
 import * as accounts from './accounts.service.ts'
 
 export const accountsRoutes = Router()
 
+// One limit for every way of signing in: 10 requests per 15 minutes per address, email and
+// phone routes counted together.
 const signInLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 10,
@@ -24,6 +26,20 @@ const signInLimit = rateLimit({
 accountsRoutes.post('/auth/sign-in', signInLimit, async (req, res) => {
   const { email, password } = SignInInput.parse(req.body)
   const session = await accounts.signIn(email, password)
+  setSessionCookie(res, session.token, session.expiresAt)
+  res.json({ user: session.user })
+})
+
+// Technicians: "text me a code". Always 204, whether or not the number is a technician's.
+accountsRoutes.post('/auth/phone/code', signInLimit, async (req, res) => {
+  const { phone } = PhoneCodeInput.parse(req.body)
+  await accounts.requestSignInCode(phone)
+  res.status(204).end()
+})
+
+accountsRoutes.post('/auth/phone/sign-in', signInLimit, async (req, res) => {
+  const { phone, code } = PhoneSignInInput.parse(req.body)
+  const session = await accounts.signInWithCode(phone, code)
   setSessionCookie(res, session.token, session.expiresAt)
   res.json({ user: session.user })
 })

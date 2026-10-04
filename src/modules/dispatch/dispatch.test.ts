@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { eq } from 'drizzle-orm'
+import { asc, eq } from 'drizzle-orm'
 import request from 'supertest'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -10,12 +10,22 @@ import {
   resetDb,
   type Shop,
   signIn,
+  signInTechnician,
   TUESDAY,
   WEDNESDAY,
 } from '../../../test/helpers.ts'
 import { createApp } from '../../app.ts'
+import { env } from '../../config/env.ts'
 import { db } from '../../db/client.ts'
-import { auditEvents, bookingDrafts, bookingPhotos, jobs, users } from '../../db/schema.ts'
+import {
+  auditEvents,
+  bookingDrafts,
+  bookingPhotos,
+  jobPhotos,
+  jobs,
+  messages,
+  users,
+} from '../../db/schema.ts'
 import { emitToTenant } from '../../realtime/index.ts'
 
 vi.mock('../../realtime/index.ts', () => ({ emitToTenant: vi.fn() }))
@@ -41,6 +51,22 @@ async function addBookingPhoto(shop: Shop, jobId: string, token: string) {
   const [photo] = await db
     .insert(bookingPhotos)
     .values({ tenantId: shop.tenant.id, draftId: draft.id, contentType: 'image/jpeg', data: JPEG })
+    .returning()
+  return photo
+}
+
+// A photo the technician took on this visit.
+async function addWorkPhoto(shop: Shop, jobId: string, stage: 'before' | 'after') {
+  const [photo] = await db
+    .insert(jobPhotos)
+    .values({
+      tenantId: shop.tenant.id,
+      jobId,
+      stage,
+      contentType: 'image/jpeg',
+      data: JPEG,
+      uploadedBy: shop.ana.id,
+    })
     .returning()
   return photo
 }
@@ -98,6 +124,7 @@ describe('GET /api/dispatch/board', () => {
         technicianId: shop.mike.id,
         windowId: shop.tueMorning.id,
         windowLabel: '8 AM–12 PM',
+        etaLabel: null,
         customerName: 'Maria Lopez',
         city: 'Phoenix',
         serviceName: 'AC repair',
@@ -160,6 +187,8 @@ describe('GET /api/jobs/:jobId', () => {
       expect.objectContaining({ body: 'Gate code 4321', authorName: 'Test office' }),
     ])
     expect(res.body.photos).toEqual([]) // booked by the office: no homeowner photos
+    // A job made straight in the database has no booked lines.
+    expect(res.body.charges).toEqual({ lines: [], approvedTotalCents: 0, proposedTotalCents: 0 })
   })
 
   it("404s for another contractor's job", async () => {
@@ -197,6 +226,65 @@ describe('GET /api/jobs/:jobId', () => {
     expect(wrongJob.body.error.message).toBe('That photo isn’t on this job.')
     await request(app).get(`/api/jobs/${job.id}/photos/${photo.id}`).expect(401)
   })
+
+  it("shows the technician's before and after photos, apart from the homeowner's", async () => {
+    const shop = await createShop('desert')
+    const job = await createJob(shop, { technicianId: shop.ana.id, status: 'in_progress' })
+    const booking = await addBookingPhoto(shop, job.id, 'token-a')
+    const before = await addWorkPhoto(shop, job.id, 'before')
+    const after = await addWorkPhoto(shop, job.id, 'after')
+
+    const res = await request(app).get(`/api/jobs/${job.id}`).set('Cookie', shop.cookie).expect(200)
+
+    expect(res.body.photos).toEqual([
+      { id: booking.id, url: `/jobs/${job.id}/photos/${booking.id}` },
+    ])
+    expect(res.body.workPhotos).toEqual({
+      before: [{ id: before.id, url: `/jobs/${job.id}/work-photos/${before.id}` }],
+      after: [{ id: after.id, url: `/jobs/${job.id}/work-photos/${after.id}` }],
+    })
+  })
+
+  it('has empty technician photo groups when there are none', async () => {
+    const shop = await createShop('desert')
+    const job = await createJob(shop)
+
+    const res = await request(app).get(`/api/jobs/${job.id}`).set('Cookie', shop.cookie).expect(200)
+
+    expect(res.body.workPhotos).toEqual({ before: [], after: [] })
+  })
+
+  it("serves the technician's photos to staff of that contractor only", async () => {
+    const shop = await createShop('desert')
+    const other = await createShop('other')
+    const job = await createJob(shop, { technicianId: shop.ana.id, status: 'in_progress' })
+    const otherJob = await createJob(shop, {
+      technicianId: shop.ana.id,
+      status: 'in_progress',
+      at: `${TUESDAY} 12:00`,
+    })
+    const photo = await addWorkPhoto(shop, job.id, 'before')
+    const otherPhoto = await addWorkPhoto(shop, otherJob.id, 'after')
+    const url = `/api/jobs/${job.id}/work-photos/${photo.id}`
+
+    const image = await request(app).get(url).set('Cookie', shop.cookie).expect(200)
+    expect(image.headers['content-type']).toBe('image/jpeg')
+    expect(image.headers['x-content-type-options']).toBe('nosniff')
+    expect(image.headers['cache-control']).toBe('private, max-age=31536000, immutable')
+    expect(Buffer.compare(image.body, JPEG)).toBe(0)
+
+    const wrongJob = await request(app)
+      .get(`/api/jobs/${job.id}/work-photos/${otherPhoto.id}`)
+      .set('Cookie', shop.cookie)
+      .expect(404)
+    expect(wrongJob.body.error.message).toBe('That photo isn’t on this job.')
+    await request(app).get(url).set('Cookie', other.cookie).expect(404)
+    await request(app).get(url).expect(401)
+    await request(app)
+      .get(url)
+      .set('Cookie', await signInTechnician(shop.ana))
+      .expect(403)
+  })
 })
 
 describe('PUT /api/jobs/:jobId/slot', () => {
@@ -222,6 +310,35 @@ describe('PUT /api/jobs/:jobId/slot', () => {
     })
     const audit = await db.select().from(auditEvents)
     expect(audit.map((event) => event.action)).toEqual(['job.assigned'])
+  })
+
+  it('texts the technician a link to the job when assigned, moved or reassigned', async () => {
+    const shop = await createShop('desert')
+    const job = await createJob(shop)
+    const put = (body: object) =>
+      request(app).put(`/api/jobs/${job.id}/slot`).set('Cookie', shop.cookie).send(body).expect(200)
+    const texts = () => db.select().from(messages).orderBy(asc(messages.createdAt))
+
+    await put({ date: TUESDAY, windowId: shop.tueMorning.id, technicianId: shop.mike.id })
+    await put({ date: TUESDAY, windowId: shop.tueAfternoon.id, technicianId: shop.mike.id })
+    // Nothing changed: no text.
+    await put({ date: TUESDAY, windowId: shop.tueAfternoon.id, technicianId: shop.mike.id })
+    await put({ date: TUESDAY, windowId: shop.tueAfternoon.id, technicianId: shop.ana.id })
+    // Unassigning texts nobody.
+    await put({ date: TUESDAY, windowId: shop.tueAfternoon.id, technicianId: null })
+
+    const sent = await texts()
+    const link = `https://desert.${env.APP_DOMAIN}/jobs/${job.id}`
+    expect(sent.map((text) => [text.contact, text.kind, text.toUserId, text.jobId])).toEqual([
+      [shop.mike.phone, 'job_assigned', shop.mike.id, job.id],
+      [shop.mike.phone, 'job_assigned', shop.mike.id, job.id],
+      [shop.ana.phone, 'job_assigned', shop.ana.id, job.id],
+    ])
+    expect(sent[0].body).toContain('New job')
+    expect(sent[0].body).toContain(link)
+    expect(sent[1].body).toContain('Job changed')
+    expect(sent[1].body).toContain('12 PM-4 PM')
+    expect(sent[2].body).toContain('New job')
   })
 
   it('moves a job to another day and unassigns it, refreshing both days', async () => {
@@ -388,5 +505,58 @@ describe('POST /api/jobs/:jobId/notes', () => {
       .send({ body: '   ' })
       .expect(400)
     expect(res.body.error.details).toEqual({ body: ['Write a note first'] })
+  })
+})
+
+describe('arrival times', () => {
+  // 9:10 AM in Phoenix on TUESDAY.
+  const nineTen = new Date(`${TUESDAY}T16:10:00Z`)
+
+  it('shows the arrival time on the board and in the drawer until the visit starts', async () => {
+    const shop = await createShop('desert')
+    const mine = { technicianId: shop.mike.id, etaAt: nineTen }
+    const enRoute = await createJob(shop, { ...mine, status: 'en_route' })
+    const late = await createJob(shop, mine) // booked, after "Running late"
+    const started = await createJob(shop, { ...mine, status: 'in_progress' })
+    const noTime = await createJob(shop)
+
+    const board = await request(app)
+      .get(`/api/dispatch/board?date=${TUESDAY}`)
+      .set('Cookie', shop.cookie)
+      .expect(200)
+    const etaOf = (id: string) =>
+      board.body.jobs.find((job: { id: string }) => job.id === id).etaLabel
+    expect(etaOf(enRoute.id)).toBe('9:10 AM')
+    expect(etaOf(late.id)).toBe('9:10 AM')
+    expect(etaOf(started.id)).toBeNull()
+    expect(etaOf(noTime.id)).toBeNull()
+
+    const drawer = await request(app)
+      .get(`/api/jobs/${enRoute.id}`)
+      .set('Cookie', shop.cookie)
+      .expect(200)
+    expect(drawer.body.job.etaLabel).toBe('9:10 AM')
+    expect(drawer.body.job.completedLabel).toBeNull()
+  })
+
+  it('forgets the arrival time when the office changes the status or moves the job', async () => {
+    const shop = await createShop('desert')
+    const statusChanged = await createJob(shop, { technicianId: shop.mike.id, etaAt: nineTen })
+    const moved = await createJob(shop, { technicianId: shop.mike.id, etaAt: nineTen })
+
+    await request(app)
+      .post(`/api/jobs/${statusChanged.id}/status`)
+      .set('Cookie', shop.cookie)
+      .send({ status: 'en_route' })
+      .expect(200)
+    await request(app)
+      .put(`/api/jobs/${moved.id}/slot`)
+      .set('Cookie', shop.cookie)
+      .send({ date: TUESDAY, windowId: shop.tueAfternoon.id, technicianId: shop.mike.id })
+      .expect(200)
+
+    const saved = await db.select({ id: jobs.id, etaAt: jobs.etaAt }).from(jobs)
+    expect(saved.find((job) => job.id === statusChanged.id)?.etaAt).toBeNull()
+    expect(saved.find((job) => job.id === moved.id)?.etaAt).toBeNull()
   })
 })

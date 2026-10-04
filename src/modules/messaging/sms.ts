@@ -1,22 +1,69 @@
 import { type Db, db } from '../../db/client.ts'
-import { type MESSAGE_KINDS, messages } from '../../db/schema.ts'
-import { logger } from '../../lib/logger.ts'
+import { MESSAGE_MAX_ATTEMPTS } from '../../db/schema.ts'
+import * as queries from './messaging.queries.ts'
+import { type MessageKind, quietUntil, TEXT_RULES } from './rules.ts'
+import { deliver } from './sender.ts'
 
-// TEMPORARY: this does not send anything. It saves the text as 'queued' and logs that it did,
-// so the rest of the app can be built and tested. Before putting a real provider here, read
-// docs/real-texting-todo.md: the consent check, STOP replies and quiet hours all belong in
-// this function.
+// Every text Relay sends starts here. It applies the rules (consent, quiet hours) and saves the
+// text in the caller's transaction, so the change and its text are saved together or not at
+// all. It never calls the network: the sender loop (sender.ts) sends saved texts a few seconds
+// later. The one exception is a sign-in code, sent right away (see below).
 export async function sendText(
   tenantId: string,
-  text: { contact: string; kind: (typeof MESSAGE_KINDS)[number]; body: string },
+  text: {
+    contact: string
+    kind: MessageKind
+    body: string
+    toUserId?: string // the staff member or technician it goes to
+    jobId?: string // the job it is about
+    customerId?: string // the homeowner it goes to
+  },
   tx: Db = db,
 ) {
-  const [message] = await tx
-    .insert(messages)
-    .values({ tenantId, channel: 'sms', direction: 'outbound', status: 'queued', ...text })
-    .returning({ id: messages.id })
-  logger.info(
-    { tenantId, messageId: message.id, kind: text.kind },
-    'Text saved, not sent: real texting isn’t built yet',
+  const rule = TEXT_RULES[text.kind]
+  const blockedReason = await consentProblem(tenantId, text.contact, rule.consent, tx)
+  const sendAfter = rule.quietHours && !blockedReason ? await endOfQuietHours(tenantId, tx) : null
+
+  // A sign-in code is never stored: anyone who can read messages could sign in with it.
+  const isCode = text.kind === 'sign_in_code'
+  const message = await queries.insertText(
+    {
+      tenantId,
+      channel: 'sms',
+      direction: 'outbound',
+      status: blockedReason ? 'blocked' : 'queued',
+      blockedReason,
+      ...text,
+      body: isCode ? 'Sign-in code (not stored)' : text.body,
+      ...(sendAfter ? { sendAfter } : {}),
+      // One try only: the loop can't retry a code it never saw.
+      ...(isCode ? { attempts: MESSAGE_MAX_ATTEMPTS } : {}),
+    },
+    tx,
   )
+
+  // The sign-in route uses no transaction, so the row is already saved: send the real code now.
+  if (isCode && !blockedReason) {
+    await deliver({ id: message.id, tenantId, contact: text.contact, body: text.body }, true)
+  }
+}
+
+// Why the homeowner can't be texted, or null if they can. An opt-out (STOP) always wins.
+async function consentProblem(
+  tenantId: string,
+  contact: string,
+  consent: 'required' | 'opt_out' | 'none',
+  tx: Db,
+) {
+  if (consent === 'none') return null
+  const latest = await queries.findLatestConsent(tenantId, contact, tx)
+  if (latest?.granted === false) return 'opted_out' as const
+  if (!latest && consent === 'required') return 'no_consent' as const
+  return null
+}
+
+// When quiet hours end for this contractor, if it is quiet hours now.
+async function endOfQuietHours(tenantId: string, tx: Db) {
+  const quiet = await queries.findQuietHours(tenantId, tx)
+  return quietUntil(new Date(), quiet.timezone, quiet.start, quiet.end)
 }

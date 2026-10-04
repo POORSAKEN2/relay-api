@@ -8,6 +8,10 @@ export type RealtimeEvents = {
   'booking.priority': JobChange
   'job.assigned': JobChange
   'job.status_changed': JobChange
+  // A repair was added, removed, approved or declined on the job.
+  'job.charges_changed': JobChange
+  // A note was added to the job.
+  'job.note_added': JobChange
   // A technician was added, edited, deactivated or reactivated.
   'team.updated': { tenantId: string }
   // A service was added, edited, archived, restored or moved in the list.

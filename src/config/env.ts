@@ -1,13 +1,39 @@
 import { z } from 'zod'
 
-const EnvSchema = z.object({
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  PORT: z.coerce.number().int().positive().default(3000),
-  DATABASE_URL: z.url(),
-  APP_DOMAIN: z.string().min(1),
-  SENTRY_DSN: z.url().optional(),
-  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
-})
+const EnvSchema = z
+  .object({
+    NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+    PORT: z.coerce.number().int().positive().default(3000),
+    DATABASE_URL: z.url(),
+    APP_DOMAIN: z.string().min(1),
+    // Keys the hash of technician sign-in codes. Any random string of 32 or more characters.
+    SIGN_IN_CODE_SECRET: z.string().min(32),
+    SENTRY_DSN: z.url().optional(),
+    LOG_LEVEL: z
+      .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
+      .default('info'),
+    // 'log' sends nothing: texts are logged (printed in development). 'httpsms' really sends.
+    SMS_PROVIDER: z.enum(['log', 'httpsms']).default('log'),
+    HTTPSMS_API_KEY: z.string().min(1).optional(),
+    // The signing key typed when the webhook was created in httpSMS.
+    HTTPSMS_WEBHOOK_SIGNING_KEY: z.string().min(1).optional(),
+    // db:seed only: the demo phone's number, E.164 ('+639171234567').
+    SEED_SMS_NUMBER: z
+      .string()
+      .regex(/^\+[1-9]\d{7,14}$/)
+      .optional(),
+  })
+  .superRefine((env, ctx) => {
+    if (env.SMS_PROVIDER !== 'httpsms') return
+    for (const name of ['HTTPSMS_API_KEY', 'HTTPSMS_WEBHOOK_SIGNING_KEY'] as const) {
+      if (!env[name])
+        ctx.addIssue({
+          code: 'custom',
+          path: [name],
+          message: 'Required with SMS_PROVIDER=httpsms',
+        })
+    }
+  })
 
 export type Env = z.infer<typeof EnvSchema>
 

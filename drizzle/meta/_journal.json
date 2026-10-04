@@ -57,6 +57,34 @@
       "when": 1790839178865,
       "tag": "0007_booking_photos",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790880828793,
+      "tag": "0008_job_booked_lines",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791020813981,
+      "tag": "0009_customer_imports",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1791037017221,
+      "tag": "0010_technician_job_photos",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1791044232658,
+      "tag": "0011_sms_outbox",
+      "breakpoints": true
     }
   ]
 }
