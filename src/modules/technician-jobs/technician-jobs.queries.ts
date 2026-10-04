@@ -1,6 +1,7 @@
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
 import { type Db, db } from '../../db/client.ts'
-import { customers, jobs, properties, services, tenants, users } from '../../db/schema.ts'
+import { customers, jobItems, jobs, properties, services, tenants, users } from '../../db/schema.ts'
 import { local, localOrNull } from '../dispatch/dispatch.queries.ts'
 
 // Tenant-scoped: every query takes tenantId first. The job page reuses the dispatch module's
@@ -92,3 +93,79 @@ export async function findJobContact(tenantId: string, jobId: string, tx: Db) {
   return contact
 }
 export type JobContact = Awaited<ReturnType<typeof findJobContact>>
+
+// Sets the equipment on the job's address.
+export async function updateJobEquipment(
+  tenantId: string,
+  jobId: string,
+  values: { equipmentBrand: string | null; equipmentYear: number | null },
+  tx: Db,
+) {
+  await tx
+    .update(properties)
+    .set(values)
+    .where(
+      and(
+        eq(properties.tenantId, tenantId),
+        eq(
+          properties.id,
+          sql`(select ${jobs.propertyId} from ${jobs} where ${jobs.tenantId} = ${tenantId} and ${jobs.id} = ${jobId})`,
+        ),
+      ),
+    )
+}
+
+// The latest finished visits at the same address as `jobId`, newest first, without `jobId`
+// itself. Only done jobs: a cancelled or no-access visit repaired nothing.
+export function listPastVisits(tenantId: string, jobId: string, limit: number) {
+  const current = alias(jobs, 'current')
+  return db
+    .select({
+      id: jobs.id,
+      date: local(jobs.windowStartsAt, 'YYYY-MM-DD'),
+      serviceName: services.name,
+    })
+    .from(jobs)
+    .innerJoin(tenants, eq(tenants.id, jobs.tenantId))
+    .innerJoin(services, eq(services.id, jobs.serviceId))
+    .innerJoin(
+      current,
+      and(
+        eq(current.tenantId, jobs.tenantId),
+        eq(current.customerId, jobs.customerId),
+        eq(current.propertyId, jobs.propertyId),
+      ),
+    )
+    .where(
+      and(
+        eq(jobs.tenantId, tenantId),
+        eq(current.id, jobId),
+        eq(jobs.status, 'done'),
+        ne(jobs.id, jobId),
+      ),
+    )
+    .orderBy(desc(jobs.windowStartsAt), desc(jobs.createdAt))
+    .limit(limit)
+}
+
+// The repairs the homeowner approved on these jobs, in the order they were added. Booked
+// lines (the service, the priority fee) have no price item, so they are left out.
+export async function listApprovedRepairs(tenantId: string, jobIds: string[]) {
+  if (jobIds.length === 0) return []
+  return db
+    .select({
+      jobId: jobItems.jobId,
+      description: jobItems.description,
+      quantity: jobItems.quantity,
+    })
+    .from(jobItems)
+    .where(
+      and(
+        eq(jobItems.tenantId, tenantId),
+        inArray(jobItems.jobId, jobIds),
+        isNotNull(jobItems.priceItemId),
+        eq(jobItems.status, 'approved'),
+      ),
+    )
+    .orderBy(asc(jobItems.createdAt), asc(jobItems.id))
+}

@@ -283,7 +283,7 @@ export const phoneNumbers = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     tenantId: tenantId(),
-    number: text('number').notNull(), // Twilio webhooks find the tenant by this
+    number: text('number').notNull(), // webhooks find the tenant by this (httpSMS: `owner`)
     providerSid: text('provider_sid').unique(), // Twilio IncomingPhoneNumber SID
     status: text('status', { enum: PHONE_NUMBER_STATUSES }).notNull().default('active'),
     createdAt: createdAt(),
@@ -432,6 +432,39 @@ export const arrivalWindows = pgTable(
 // How the record was first created.
 export const CUSTOMER_SOURCES = ['booking', 'call', 'office', 'import'] as const
 
+// One row per spreadsheet the office imported, so imports can be listed and undone.
+export const customerImports = pgTable(
+  'customer_imports',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: tenantId(),
+    createdBy: uuid('created_by').notNull(),
+    fileName: text('file_name').notNull(),
+    createdCount: integer('created_count').notNull(),
+    skippedCount: integer('skipped_count').notNull(), // already in Relay, repeated or invalid
+    keptCount: integer('kept_count'), // set by undo: customers kept because they have history
+    createdAt: createdAt(),
+    undoneAt: timestamptz('undone_at'),
+  },
+  (t) => [
+    unique().on(t.tenantId, t.id),
+    foreignKey({
+      name: 'customer_imports_created_by_fk',
+      columns: [t.tenantId, t.createdBy],
+      foreignColumns: [users.tenantId, users.id],
+    }),
+    check(
+      'customer_imports_counts_not_negative',
+      sql`${t.createdCount} >= 0 and ${t.skippedCount} >= 0 and (${t.keptCount} is null or ${t.keptCount} >= 0)`,
+    ),
+    check(
+      'customer_imports_undo_complete',
+      sql`(${t.undoneAt} is null) = (${t.keptCount} is null)`,
+    ),
+    index('customer_imports_tenant_created_idx').on(t.tenantId, t.createdAt.desc()),
+  ],
+)
+
 export const customers = pgTable(
   'customers',
   {
@@ -442,6 +475,7 @@ export const customers = pgTable(
     email: text('email'),
     notes: text('notes'),
     source: text('source', { enum: CUSTOMER_SOURCES }).notNull(),
+    importId: uuid('import_id'), // the spreadsheet import that added it; null otherwise
     createdAt: createdAt(),
   },
   (t) => [
@@ -449,6 +483,13 @@ export const customers = pgTable(
     check('customers_phone_e164', e164(t.phone)),
     check('customers_email_lowercase', sql`${t.email} = lower(${t.email})`),
     check('customers_source_valid', oneOf(t.source, CUSTOMER_SOURCES)),
+    foreignKey({
+      name: 'customers_import_fk',
+      columns: [t.tenantId, t.importId],
+      foreignColumns: [customerImports.tenantId, customerImports.id],
+    }),
+    check('customers_import_has_source', sql`${t.importId} is null or ${t.source} = 'import'`),
+    index('customers_tenant_import_idx').on(t.tenantId, t.importId),
     // Not unique: spreadsheet imports and shared household phones can repeat.
     index('customers_tenant_phone_idx').on(t.tenantId, t.phone),
   ],
@@ -702,6 +743,9 @@ export const jobNotes = pgTable(
 )
 
 export const PHOTO_STAGES = ['before', 'after'] as const
+export const JOB_PHOTO_MAX_BYTES = 1024 * 1024
+// Per stage, per job: enough for a unit, its label and the finished work.
+export const MAX_JOB_PHOTOS_PER_STAGE = 6
 
 export const jobPhotos = pgTable(
   'job_photos',
@@ -709,8 +753,10 @@ export const jobPhotos = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     tenantId: tenantId(),
     jobId: uuid('job_id').notNull(),
-    storageKey: text('storage_key').notNull(), // private file-storage key, served by signed URL
     stage: text('stage', { enum: PHOTO_STAGES }).notNull(),
+    // Read from the bytes on upload, never from the upload's header. Same list as profile photos.
+    contentType: text('content_type', { enum: PROFILE_PHOTO_TYPES }).notNull(),
+    data: bytea('data').notNull(),
     uploadedBy: uuid('uploaded_by').notNull(),
     createdAt: createdAt(),
   },
@@ -726,6 +772,11 @@ export const jobPhotos = pgTable(
       foreignColumns: [users.tenantId, users.id],
     }),
     check('job_photos_stage_valid', oneOf(t.stage, PHOTO_STAGES)),
+    check('job_photos_content_type_valid', oneOf(t.contentType, PROFILE_PHOTO_TYPES)),
+    check(
+      'job_photos_size',
+      sql`octet_length(${t.data}) between 1 and ${sql.raw(String(JOB_PHOTO_MAX_BYTES))}`,
+    ),
     index('job_photos_job_idx').on(t.tenantId, t.jobId),
   ],
 )
@@ -923,6 +974,9 @@ export const MESSAGE_KINDS = [
   'sign_in_code',
 ] as const
 
+// The sender gives up on a text after this many tries to hand it to the provider.
+export const MESSAGE_MAX_ATTEMPTS = 3
+
 export const messages = pgTable(
   'messages',
   {
@@ -936,7 +990,11 @@ export const messages = pgTable(
     body: text('body').notNull(),
     status: text('status', { enum: MESSAGE_STATUSES }).notNull(),
     blockedReason: text('blocked_reason', { enum: MESSAGE_BLOCKED_REASONS }),
-    providerMessageId: text('provider_message_id').unique(), // Twilio MessageSid / email Message-ID
+    providerMessageId: text('provider_message_id').unique(), // httpSMS message id / email Message-ID
+    // Outbound: the sender loop sends it once due. Quiet hours and retries push it later.
+    sendAfter: timestamptz('send_after').notNull().defaultNow(),
+    attempts: smallint('attempts').notNull().default(0), // tries to hand it to the provider
+    lastError: text('last_error'), // from the provider or the phone, for a failed text
     customerId: uuid('customer_id'),
     jobId: uuid('job_id'),
     callId: uuid('call_id'), // the call a text-back answers
@@ -985,6 +1043,16 @@ export const messages = pgTable(
     ),
     check('messages_blocked_reason_valid', oneOf(t.blockedReason, MESSAGE_BLOCKED_REASONS)),
     check('messages_kind_valid', oneOf(t.kind, MESSAGE_KINDS)),
+    check(
+      'messages_attempts_range',
+      sql`${t.attempts} between 0 and ${sql.raw(String(MESSAGE_MAX_ATTEMPTS))}`,
+    ),
+    check('messages_inbound_no_attempts', sql`${t.direction} = 'outbound' or ${t.attempts} = 0`),
+    // The sender loop's query: texts not yet handed to the provider. A row leaves it as soon as
+    // the provider takes it, so it stays tiny.
+    index('messages_due_idx')
+      .on(t.sendAfter)
+      .where(sql`${t.status} = 'queued' and ${t.providerMessageId} is null`),
     index('messages_thread_idx').on(t.tenantId, t.contact, t.createdAt.desc().nullsFirst()),
     index('messages_job_idx').on(t.tenantId, t.jobId),
   ],
@@ -1225,14 +1293,14 @@ export const auditEvents = pgTable(
   ],
 )
 
-export const WEBHOOK_PROVIDERS = ['twilio', 'xendit', 'stripe'] as const
+export const WEBHOOK_PROVIDERS = ['twilio', 'xendit', 'stripe', 'httpsms'] as const
 
 // Webhook dedupe: insert first; a conflict means this event was already handled.
 export const webhookEvents = pgTable(
   'webhook_events',
   {
     provider: text('provider', { enum: WEBHOOK_PROVIDERS }).notNull(),
-    eventId: text('event_id').notNull(), // Twilio SID / Xendit event id
+    eventId: text('event_id').notNull(), // Twilio SID / Xendit event id / httpSMS event id
     receivedAt: timestamptz('received_at').notNull().defaultNow(),
   },
   (t) => [

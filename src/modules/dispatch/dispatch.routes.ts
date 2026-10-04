@@ -31,6 +31,11 @@ dispatchRoutes.get('/jobs/:jobId/photos/:photoId', staff, async (req, res) => {
   sendPhoto(res, await dispatch.getJobPhoto(tenantOf(req.user!), jobId, photoId))
 })
 
+dispatchRoutes.get('/jobs/:jobId/work-photos/:photoId', staff, async (req, res) => {
+  const { jobId, photoId } = JobPhotoParams.parse(req.params)
+  sendPhoto(res, await dispatch.getWorkPhoto(tenantOf(req.user!), jobId, photoId))
+})
+
 dispatchRoutes.put('/jobs/:jobId/slot', staff, async (req, res) => {
   const { jobId } = JobParams.parse(req.params)
   const input = SlotInput.parse(req.body)

@@ -1,14 +1,16 @@
-import { Router } from 'express'
+import express, { Router } from 'express'
 import { sendPhoto } from '../../lib/send-photo.ts'
 import { requireRole } from '../../middleware/auth.ts'
-import { JobParams, JobPhotoParams } from '../dispatch/dispatch.schemas.ts'
+import { JobParams, JobPhotoParams, NoteInput } from '../dispatch/dispatch.schemas.ts'
 import {
   DecisionInput,
+  EquipmentInput,
   NoAccessInput,
   OnMyWayInput,
   RepairInput,
   RepairParams,
   RunningLateInput,
+  WorkPhotoStageParams,
 } from './technician-jobs.schemas.ts'
 import * as technicianJobs from './technician-jobs.service.ts'
 
@@ -16,6 +18,9 @@ import * as technicianJobs from './technician-jobs.service.ts'
 export const technicianJobsRoutes = Router()
 
 const technician = requireRole('technician')
+// A photo is the request body itself, not JSON. The service refuses anything that isn't a
+// small JPEG, PNG or WebP, whatever the upload says it is.
+const photoBody = express.raw({ type: () => true, limit: '2mb' })
 
 technicianJobsRoutes.get('/my-jobs', technician, async (req, res) => {
   res.json(await technicianJobs.listMyJobs(req.user!))
@@ -34,6 +39,30 @@ technicianJobsRoutes.get('/my-jobs/:jobId/photos/:photoId', technician, async (r
   const { jobId, photoId } = JobPhotoParams.parse(req.params)
   sendPhoto(res, await technicianJobs.getMyJobPhoto(req.user!, jobId, photoId))
 })
+
+technicianJobsRoutes.post(
+  '/my-jobs/:jobId/work-photos/:stage',
+  technician,
+  photoBody,
+  async (req, res) => {
+    const { jobId, stage } = WorkPhotoStageParams.parse(req.params)
+    res.status(201).json(await technicianJobs.addWorkPhoto(req.user!, jobId, stage, req.body))
+  },
+)
+
+technicianJobsRoutes.get('/my-jobs/:jobId/work-photos/:photoId', technician, async (req, res) => {
+  const { jobId, photoId } = JobPhotoParams.parse(req.params)
+  sendPhoto(res, await technicianJobs.getWorkPhoto(req.user!, jobId, photoId))
+})
+
+technicianJobsRoutes.delete(
+  '/my-jobs/:jobId/work-photos/:photoId',
+  technician,
+  async (req, res) => {
+    const { jobId, photoId } = JobPhotoParams.parse(req.params)
+    res.json(await technicianJobs.removeWorkPhoto(req.user!, jobId, photoId))
+  },
+)
 
 technicianJobsRoutes.post('/my-jobs/:jobId/on-my-way', technician, async (req, res) => {
   const { jobId } = JobParams.parse(req.params)
@@ -78,4 +107,16 @@ technicianJobsRoutes.post('/my-jobs/:jobId/repairs/decision', technician, async 
   const { jobId } = JobParams.parse(req.params)
   const { decision } = DecisionInput.parse(req.body)
   res.json(await technicianJobs.decideRepairs(req.user!, jobId, decision))
+})
+
+technicianJobsRoutes.post('/my-jobs/:jobId/notes', technician, async (req, res) => {
+  const { jobId } = JobParams.parse(req.params)
+  const { body } = NoteInput.parse(req.body)
+  res.status(201).json(await technicianJobs.addNote(req.user!, jobId, body))
+})
+
+technicianJobsRoutes.patch('/my-jobs/:jobId/equipment', technician, async (req, res) => {
+  const { jobId } = JobParams.parse(req.params)
+  const input = EquipmentInput.parse(req.body)
+  res.json(await technicianJobs.setEquipment(req.user!, jobId, input))
 })

@@ -7,6 +7,7 @@ import {
   bookingPhotos,
   customers,
   jobNotes,
+  jobPhotos,
   jobs,
   properties,
   services,
@@ -203,6 +204,38 @@ export async function lockJob(tenantId: string, jobId: string, tx: Tx) {
   return job
 }
 
+// What the technician's "job assigned" / "job changed" text says: who, which job, when, and
+// the contractor's address for the link.
+export async function findAssignmentText(
+  tenantId: string,
+  jobId: string,
+  technicianId: string,
+  tx: Db,
+) {
+  const [row] = await tx
+    .select({
+      tenant: {
+        slug: tenants.slug,
+        customDomain: tenants.customDomain,
+        customDomainVerifiedAt: tenants.customDomainVerifiedAt,
+      },
+      contractorName: tenants.name,
+      technicianPhone: users.phone,
+      serviceName: services.name,
+      city: properties.city,
+      date: local(jobs.windowStartsAt, 'YYYY-MM-DD'),
+      localStart: local(jobs.windowStartsAt, 'HH24:MI:SS'),
+      localEnd: local(jobs.windowEndsAt, 'HH24:MI:SS'),
+    })
+    .from(jobs)
+    .innerJoin(tenants, eq(tenants.id, jobs.tenantId))
+    .innerJoin(properties, eq(properties.id, jobs.propertyId))
+    .innerJoin(services, eq(services.id, jobs.serviceId))
+    .innerJoin(users, and(eq(users.tenantId, jobs.tenantId), eq(users.id, technicianId)))
+    .where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, jobId)))
+  return row
+}
+
 export async function jobExists(tenantId: string, jobId: string) {
   const [job] = await db
     .select({ id: jobs.id })
@@ -264,4 +297,47 @@ export async function findJobPhoto(tenantId: string, jobId: string, photoId: str
       ),
     )
   return photo
+}
+
+// The technician's own photos of a job, oldest first, with the stage each belongs to. Shown to
+// the office and to the technician.
+export function listWorkPhotos(tenantId: string, jobId: string, tx: Db = db) {
+  return tx
+    .select({ id: jobPhotos.id, stage: jobPhotos.stage })
+    .from(jobPhotos)
+    .where(and(eq(jobPhotos.tenantId, tenantId), eq(jobPhotos.jobId, jobId)))
+    .orderBy(asc(jobPhotos.createdAt))
+}
+
+export async function insertWorkPhoto(
+  tenantId: string,
+  values: Pick<
+    typeof jobPhotos.$inferInsert,
+    'jobId' | 'stage' | 'contentType' | 'data' | 'uploadedBy'
+  >,
+  tx: Db = db,
+) {
+  const [photo] = await tx
+    .insert(jobPhotos)
+    .values({ tenantId, ...values })
+    .returning({ id: jobPhotos.id })
+  return photo
+}
+
+export async function findWorkPhoto(tenantId: string, jobId: string, photoId: string) {
+  const [photo] = await db
+    .select({ contentType: jobPhotos.contentType, data: jobPhotos.data })
+    .from(jobPhotos)
+    .where(
+      and(eq(jobPhotos.tenantId, tenantId), eq(jobPhotos.jobId, jobId), eq(jobPhotos.id, photoId)),
+    )
+  return photo
+}
+
+export function deleteWorkPhoto(tenantId: string, jobId: string, photoId: string, tx: Db = db) {
+  return tx
+    .delete(jobPhotos)
+    .where(
+      and(eq(jobPhotos.tenantId, tenantId), eq(jobPhotos.jobId, jobId), eq(jobPhotos.id, photoId)),
+    )
 }

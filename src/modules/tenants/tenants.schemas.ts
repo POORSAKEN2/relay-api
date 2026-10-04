@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { TENANT_STATUSES } from '../../db/schema.ts'
-import { UsPhone } from '../../lib/fields.ts'
+import { Phone } from '../../lib/fields.ts'
 
 export type TenantStatus = (typeof TENANT_STATUSES)[number]
 
@@ -26,7 +26,7 @@ export const CreateTenantInput = z.object({
     .refine((slug) => !RESERVED_SLUGS.includes(slug), 'That address is reserved. Pick another.'),
   timezone: z.string().refine((zone) => TIMEZONES.has(zone), 'Pick a time zone'),
   contactEmail: Email,
-  contactPhone: UsPhone,
+  contactPhone: Phone,
   owner: z.object({
     name: z.string().trim().min(1, 'Enter the owner’s name').max(100),
     email: Email,

@@ -17,6 +17,6 @@ it('gives the new arrival time when running late', () => {
 
 it('says when the technician came by and that the office will call', () => {
   expect(noAccessText(who, '1:30 PM')).toBe(
-    'Desert Breeze Air: Sam came by at 1:30 PM but couldn’t reach you. We’ll call you to set a new time.',
+    "Desert Breeze Air: Sam came by at 1:30 PM but couldn't reach you. We'll call you to set a new time.",
   )
 })

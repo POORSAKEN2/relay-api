@@ -5,6 +5,7 @@ import { env } from './config/env.ts'
 import { pool } from './db/client.ts'
 import { startJobs, stopJobs } from './jobs/index.ts'
 import { logger } from './lib/logger.ts'
+import { startSender, stopSender } from './modules/messaging/sender.ts'
 import { attachRealtime } from './realtime/index.ts'
 
 const server = createServer(createApp())
@@ -12,6 +13,7 @@ const io = attachRealtime(server)
 
 try {
   await startJobs()
+  startSender()
   server.listen(env.PORT, () => logger.info(`relay-api listening on http://localhost:${env.PORT}`))
 } catch (error) {
   logger.fatal({ err: error }, 'Startup failed')
@@ -24,6 +26,7 @@ try {
 async function shutdown(signal: string) {
   logger.info({ signal }, 'Shutting down')
   await io.close() // also closes the HTTP server
+  await stopSender()
   await stopJobs()
   await pool.end()
   process.exit(0)

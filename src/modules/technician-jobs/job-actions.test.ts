@@ -1,10 +1,24 @@
 import { eq } from 'drizzle-orm'
 import request from 'supertest'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createJob, createShop, resetDb, signInTechnician } from '../../../test/helpers.ts'
+import {
+  createJob,
+  createShop,
+  createTechnician,
+  resetDb,
+  signInTechnician,
+} from '../../../test/helpers.ts'
 import { createApp } from '../../app.ts'
 import { db } from '../../db/client.ts'
-import { auditEvents, customers, jobNotes, jobs, messages } from '../../db/schema.ts'
+import {
+  auditEvents,
+  consentEvents,
+  customers,
+  jobNotes,
+  jobs,
+  messages,
+  properties,
+} from '../../db/schema.ts'
 import { formatClock } from '../../lib/labels.ts'
 import { emitToTenant } from '../../realtime/index.ts'
 import { onMyWayText, runningLateText } from './texts.ts'
@@ -51,6 +65,14 @@ async function savedJob(jobId: string) {
 describe('On my way', () => {
   it('marks the job en route with an arrival time and texts the homeowner', async () => {
     const { shop, job, cookie } = await mikesJob()
+    // She agreed to texts when the office booked her; without it the text is blocked.
+    await db.insert(consentEvents).values({
+      tenantId: shop.tenant.id,
+      contact: '+16025550111',
+      channel: 'sms',
+      granted: true,
+      source: 'office',
+    })
     const before = Date.now()
 
     const res = await act(cookie, job.id, 'on-my-way', { minutes: 15 }).expect(200)
@@ -193,7 +215,7 @@ describe('No access', () => {
     const [text] = await db.select().from(messages)
     expect(text.kind).toBe('no_access')
     expect(text.body).toMatch(
-      /^desert HVAC: Mike came by at \d{1,2}(:\d{2})? (AM|PM) but couldn’t reach you\. We’ll call you to set a new time\.$/,
+      /^desert HVAC: Mike came by at \d{1,2}(:\d{2})? (AM|PM) but couldn't reach you\. We'll call you to set a new time\.$/,
     )
   })
 
@@ -215,5 +237,114 @@ describe('who can tap', () => {
     }
     await act(shop.cookie, anas.id, 'start').expect(403)
     expect((await savedJob(anas.id)).status).toBe('booked')
+  })
+})
+
+describe('Technician notes', () => {
+  it('saves a note under the technician and answers with the refreshed job', async () => {
+    const { shop, job, cookie } = await mikesJob()
+
+    const res = await act(cookie, job.id, 'notes', { body: '  Replaced the capacitor  ' }).expect(
+      201,
+    )
+
+    expect(res.body.notes).toEqual([
+      expect.objectContaining({ body: 'Replaced the capacitor', authorName: 'Mike' }),
+    ])
+    expect(await db.select().from(jobNotes)).toEqual([
+      expect.objectContaining({
+        jobId: job.id,
+        authorId: shop.mike.id,
+        body: 'Replaced the capacitor',
+      }),
+    ])
+    expect(emitToTenant).toHaveBeenCalledWith(shop.tenant.id, 'job.note_added', {
+      jobId: job.id,
+      dates: [phoenixDay(0)],
+    })
+  })
+
+  it('needs some text', async () => {
+    const { job, cookie } = await mikesJob()
+    const res = await act(cookie, job.id, 'notes', { body: '   ' }).expect(400)
+    expect(res.body.error.details).toEqual({ body: ['Write a note first'] })
+  })
+
+  it('refuses a job that belongs to someone else', async () => {
+    const { shop, job } = await mikesJob()
+    const other = await createTechnician(shop.tenant.id, 'Sam')
+    await act(await signInTechnician(other), job.id, 'notes', { body: 'Hello' }).expect(404)
+    expect(await db.select().from(jobNotes)).toHaveLength(0)
+  })
+})
+
+describe('PATCH /api/my-jobs/:jobId/equipment', () => {
+  function setEquipment(cookie: string, jobId: string, body: object) {
+    return request(app).patch(`/api/my-jobs/${jobId}/equipment`).set('Cookie', cookie).send(body)
+  }
+
+  async function savedProperty(propertyId: string) {
+    const [property] = await db.select().from(properties).where(eq(properties.id, propertyId))
+    return property
+  }
+
+  it('saves the brand and install year on the address and answers with the job page', async () => {
+    const { shop, job, cookie } = await mikesJob({ status: 'in_progress' })
+
+    const res = await setEquipment(cookie, job.id, {
+      equipmentBrand: ' Carrier ',
+      equipmentYear: 2014,
+    })
+
+    expect(res.status).toBe(200)
+    expect(res.body.job.property).toMatchObject({ equipmentBrand: 'Carrier', equipmentYear: 2014 })
+    expect(await savedProperty(shop.property.id)).toMatchObject({
+      equipmentBrand: 'Carrier',
+      equipmentYear: 2014,
+    })
+    const events = await db.select().from(auditEvents).where(eq(auditEvents.entityId, job.id))
+    expect(events.map((event) => event.action)).toContain('job.equipment_set')
+  })
+
+  it('clears a field left blank', async () => {
+    const { shop, job, cookie } = await mikesJob({ status: 'in_progress' })
+    await setEquipment(cookie, job.id, { equipmentBrand: 'Carrier', equipmentYear: 2014 })
+
+    await setEquipment(cookie, job.id, { equipmentBrand: '', equipmentYear: null })
+
+    expect(await savedProperty(shop.property.id)).toMatchObject({
+      equipmentBrand: null,
+      equipmentYear: null,
+    })
+  })
+
+  it('refuses a year that is too old or in the future', async () => {
+    const { job, cookie } = await mikesJob({ status: 'in_progress' })
+
+    const old = await setEquipment(cookie, job.id, { equipmentYear: 1900 })
+    const future = await setEquipment(cookie, job.id, { equipmentYear: 2999 })
+
+    expect(old.status).toBe(400)
+    expect(future.status).toBe(400)
+  })
+
+  it('refuses unless the visit is in progress', async () => {
+    const { job, cookie } = await mikesJob({ status: 'booked' })
+
+    const res = await setEquipment(cookie, job.id, { equipmentBrand: 'Carrier' })
+
+    expect(res.status).toBe(422)
+    expect(res.body.error.message).toBe('This job is booked, so the equipment can’t be changed.')
+  })
+
+  it("won't touch another technician's job", async () => {
+    const { shop, job } = await mikesJob({ status: 'in_progress' })
+    const other = await createTechnician(shop.tenant.id, 'Sam')
+    const cookie = await signInTechnician(other)
+
+    const res = await setEquipment(cookie, job.id, { equipmentBrand: 'Carrier' })
+
+    expect(res.status).toBe(404)
+    expect((await savedProperty(shop.property.id)).equipmentBrand).toBeNull()
   })
 })

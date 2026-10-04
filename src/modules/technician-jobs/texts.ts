@@ -1,5 +1,6 @@
 // The texts a homeowner gets when their technician taps a button: short, signed with the
-// contractor's name, and only the technician's first name.
+// contractor's name, and only the technician's first name. Plain ' only: a curly ’ makes the
+// whole text Unicode, which fits 70 characters per SMS instead of 160.
 
 type Who = { contractorName: string; technicianName: string }
 
@@ -16,5 +17,5 @@ export function runningLateText(who: Who, arrival: string): string {
 }
 
 export function noAccessText(who: Who, cameAt: string): string {
-  return `${who.contractorName}: ${firstName(who.technicianName)} came by at ${cameAt} but couldn’t reach you. We’ll call you to set a new time.`
+  return `${who.contractorName}: ${firstName(who.technicianName)} came by at ${cameAt} but couldn't reach you. We'll call you to set a new time.`
 }

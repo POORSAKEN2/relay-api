@@ -1,5 +1,5 @@
 {
-  "id": "74a7ba2e-7498-46e9-9725-d8b17356302f",
+  "id": "bab45260-40fd-4146-9f55-8de6f1e8a142",
   "prevId": "396d4b3e-9ffc-4a9b-9035-7306cea70339",
   "version": "7",
   "dialect": "postgresql",
@@ -503,112 +503,6 @@
       },
       "isRLSEnabled": false
     },
-    "public.branding_assets": {
-      "name": "branding_assets",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "tenant_id": {
-          "name": "tenant_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "content_type": {
-          "name": "content_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "data": {
-          "name": "data",
-          "type": "bytea",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_by": {
-          "name": "created_by",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "branding_assets_tenant_id_tenants_id_fk": {
-          "name": "branding_assets_tenant_id_tenants_id_fk",
-          "tableFrom": "branding_assets",
-          "tableTo": "tenants",
-          "columnsFrom": [
-            "tenant_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "branding_assets_created_by_users_id_fk": {
-          "name": "branding_assets_created_by_users_id_fk",
-          "tableFrom": "branding_assets",
-          "tableTo": "users",
-          "columnsFrom": [
-            "created_by"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "branding_assets_tenant_id_id_unique": {
-          "name": "branding_assets_tenant_id_id_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "tenant_id",
-            "id"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {
-        "branding_assets_kind_valid": {
-          "name": "branding_assets_kind_valid",
-          "value": "\"branding_assets\".\"kind\" in ('logo', 'favicon')"
-        },
-        "branding_assets_content_type_valid": {
-          "name": "branding_assets_content_type_valid",
-          "value": "\"branding_assets\".\"content_type\" in ('image/png', 'image/svg+xml')"
-        },
-        "branding_assets_size": {
-          "name": "branding_assets_size",
-          "value": "octet_length(\"branding_assets\".\"data\") between 1 and 524288"
-        }
-      },
-      "isRLSEnabled": false
-    },
     "public.branding_versions": {
       "name": "branding_versions",
       "schema": "",
@@ -647,18 +541,6 @@
         "favicon_url": {
           "name": "favicon_url",
           "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "logo_asset_id": {
-          "name": "logo_asset_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "favicon_asset_id": {
-          "name": "favicon_asset_id",
-          "type": "uuid",
           "primaryKey": false,
           "notNull": false
         },
@@ -721,36 +603,6 @@
             "created_by"
           ],
           "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "branding_versions_logo_fk": {
-          "name": "branding_versions_logo_fk",
-          "tableFrom": "branding_versions",
-          "tableTo": "branding_assets",
-          "columnsFrom": [
-            "tenant_id",
-            "logo_asset_id"
-          ],
-          "columnsTo": [
-            "tenant_id",
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "branding_versions_favicon_fk": {
-          "name": "branding_versions_favicon_fk",
-          "tableFrom": "branding_versions",
-          "tableTo": "branding_assets",
-          "columnsFrom": [
-            "tenant_id",
-            "favicon_asset_id"
-          ],
-          "columnsTo": [
-            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
@@ -1412,6 +1264,144 @@
       },
       "isRLSEnabled": false
     },
+    "public.customer_imports": {
+      "name": "customer_imports",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "file_name": {
+          "name": "file_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_count": {
+          "name": "created_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "skipped_count": {
+          "name": "skipped_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kept_count": {
+          "name": "kept_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "undone_at": {
+          "name": "undone_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "customer_imports_tenant_created_idx": {
+          "name": "customer_imports_tenant_created_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "customer_imports_tenant_id_tenants_id_fk": {
+          "name": "customer_imports_tenant_id_tenants_id_fk",
+          "tableFrom": "customer_imports",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "customer_imports_created_by_fk": {
+          "name": "customer_imports_created_by_fk",
+          "tableFrom": "customer_imports",
+          "tableTo": "users",
+          "columnsFrom": [
+            "tenant_id",
+            "created_by"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "customer_imports_tenant_id_id_unique": {
+          "name": "customer_imports_tenant_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "customer_imports_counts_not_negative": {
+          "name": "customer_imports_counts_not_negative",
+          "value": "\"customer_imports\".\"created_count\" >= 0 and \"customer_imports\".\"skipped_count\" >= 0 and (\"customer_imports\".\"kept_count\" is null or \"customer_imports\".\"kept_count\" >= 0)"
+        },
+        "customer_imports_undo_complete": {
+          "name": "customer_imports_undo_complete",
+          "value": "(\"customer_imports\".\"undone_at\" is null) = (\"customer_imports\".\"kept_count\" is null)"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.customers": {
       "name": "customers",
       "schema": "",
@@ -1459,6 +1449,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "import_id": {
+          "name": "import_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1468,6 +1464,27 @@
         }
       },
       "indexes": {
+        "customers_tenant_import_idx": {
+          "name": "customers_tenant_import_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "import_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "customers_tenant_phone_idx": {
           "name": "customers_tenant_phone_idx",
           "columns": [
@@ -1503,6 +1520,21 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
+        },
+        "customers_import_fk": {
+          "name": "customers_import_fk",
+          "tableFrom": "customers",
+          "tableTo": "customer_imports",
+          "columnsFrom": [
+            "tenant_id",
+            "import_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1529,6 +1561,10 @@
         "customers_source_valid": {
           "name": "customers_source_valid",
           "value": "\"customers\".\"source\" in ('booking', 'call', 'office', 'import')"
+        },
+        "customers_import_has_source": {
+          "name": "customers_import_has_source",
+          "value": "\"customers\".\"import_id\" is null or \"customers\".\"source\" = 'import'"
         }
       },
       "isRLSEnabled": false

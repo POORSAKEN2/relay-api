@@ -2,11 +2,13 @@ import { db, type Tx } from '../../db/client.ts'
 import type { jobs } from '../../db/schema.ts'
 import { HttpError } from '../../lib/http-error.ts'
 import { formatDay, formatTime, formatWindow, statusLabel, weekdayOf } from '../../lib/labels.ts'
+import { tenantUrl } from '../../lib/tenant-url.ts'
 import { emitToTenant } from '../../realtime/index.ts'
 import type { SessionUser } from '../accounts/accounts.service.ts'
 import * as audit from '../audit/audit.queries.ts'
 import { reserveWindow, tenantOf } from '../booking/booking.service.ts'
 import * as charges from '../charges/charges.service.ts'
+import { sendText } from '../messaging/sms.ts'
 import * as queries from './dispatch.queries.ts'
 import type { SettableStatus, SlotInput } from './dispatch.schemas.ts'
 
@@ -60,11 +62,26 @@ export async function getBoard(tenantId: string, date: string) {
   }
 }
 
+// The technician's own photos as the job pages get them: before and after, oldest first.
+// `basePath` is where the image route lives (the office's or the technician's); the web app
+// puts the API's address in front of each `url`.
+export function groupWorkPhotos(
+  photos: { id: string; stage: 'before' | 'after' }[],
+  basePath: string,
+) {
+  const stage = (wanted: 'before' | 'after') =>
+    photos
+      .filter((photo) => photo.stage === wanted)
+      .map((photo) => ({ id: photo.id, url: `${basePath}/${photo.id}` }))
+  return { before: stage('before'), after: stage('after') }
+}
+
 export async function getJob(tenantId: string, jobId: string) {
-  const [job, notes, photos, jobCharges] = await Promise.all([
+  const [job, notes, photos, workPhotos, jobCharges] = await Promise.all([
     queries.findJobDetail(tenantId, jobId),
     queries.listNotes(tenantId, jobId),
     queries.listJobPhotos(tenantId, jobId),
+    queries.listWorkPhotos(tenantId, jobId),
     charges.getCharges(tenantId, jobId),
   ])
   if (!job) throw new HttpError(404, 'not_found', JOB_NOT_FOUND)
@@ -83,6 +100,8 @@ export async function getJob(tenantId: string, jobId: string) {
     notes,
     // `url` is a path under the API; the web app puts the API's address in front.
     photos: photos.map((photo) => ({ id: photo.id, url: `/jobs/${jobId}/photos/${photo.id}` })),
+    // What the technician took at the unit. The office only looks at these.
+    workPhotos: groupWorkPhotos(workPhotos, `/jobs/${jobId}/work-photos`),
     charges: jobCharges,
   }
 }
@@ -90,6 +109,13 @@ export async function getJob(tenantId: string, jobId: string) {
 // A photo the homeowner added while booking this job.
 export async function getJobPhoto(tenantId: string, jobId: string, photoId: string) {
   const photo = await queries.findJobPhoto(tenantId, jobId, photoId)
+  if (!photo) throw new HttpError(404, 'not_found', 'That photo isn’t on this job.')
+  return photo
+}
+
+// A photo the technician took on this visit.
+export async function getWorkPhoto(tenantId: string, jobId: string, photoId: string) {
+  const photo = await queries.findWorkPhoto(tenantId, jobId, photoId)
   if (!photo) throw new HttpError(404, 'not_found', 'That photo isn’t on this job.')
   return photo
 }
@@ -172,11 +198,49 @@ export async function moveJob(user: SessionUser, jobId: string, input: SlotInput
         tx,
       )
     }
+    // The technician hears about it even with the app closed.
+    if (input.technicianId) {
+      await textTechnician(
+        tenantId,
+        job.id,
+        input.technicianId,
+        reassigned ? 'assigned' : 'changed',
+        tx,
+      )
+    }
     return { changed: true, dates: [...new Set([job.date, input.date])] }
   })
 
   if (result.changed) emitToTenant(tenantId, 'job.assigned', { jobId, dates: result.dates })
   return { jobId, dates: result.dates }
+}
+
+// Saves a text to the technician with a link to the job page, in the caller's transaction. The
+// page needs the technician signed in; the sign-in page sends them on to the job afterwards.
+// A technician without a phone gets none; the change stands.
+async function textTechnician(
+  tenantId: string,
+  jobId: string,
+  technicianId: string,
+  what: 'assigned' | 'changed',
+  tx: Tx,
+) {
+  const job = await queries.findAssignmentText(tenantId, jobId, technicianId, tx)
+  if (!job?.technicianPhone) return
+  const headline = what === 'assigned' ? 'New job' : 'Job changed'
+  // A plain hyphen: an en dash would make the SMS cost 70 characters instead of 160.
+  const when = `${formatDay(job.date)}, ${formatWindow(job.localStart, job.localEnd).replace('–', '-')}`
+  await sendText(
+    tenantId,
+    {
+      contact: job.technicianPhone,
+      kind: 'job_assigned',
+      body: `${job.contractorName}: ${headline}. ${job.serviceName} in ${job.city}, ${when}. ${tenantUrl(job.tenant, `/jobs/${jobId}`)}`,
+      toUserId: technicianId,
+      jobId,
+    },
+    tx,
+  )
 }
 
 // One status change, for the office's drawer and the technician's buttons alike: the only

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { eq } from 'drizzle-orm'
+import { asc, eq } from 'drizzle-orm'
 import request from 'supertest'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -10,12 +10,22 @@ import {
   resetDb,
   type Shop,
   signIn,
+  signInTechnician,
   TUESDAY,
   WEDNESDAY,
 } from '../../../test/helpers.ts'
 import { createApp } from '../../app.ts'
+import { env } from '../../config/env.ts'
 import { db } from '../../db/client.ts'
-import { auditEvents, bookingDrafts, bookingPhotos, jobs, users } from '../../db/schema.ts'
+import {
+  auditEvents,
+  bookingDrafts,
+  bookingPhotos,
+  jobPhotos,
+  jobs,
+  messages,
+  users,
+} from '../../db/schema.ts'
 import { emitToTenant } from '../../realtime/index.ts'
 
 vi.mock('../../realtime/index.ts', () => ({ emitToTenant: vi.fn() }))
@@ -41,6 +51,22 @@ async function addBookingPhoto(shop: Shop, jobId: string, token: string) {
   const [photo] = await db
     .insert(bookingPhotos)
     .values({ tenantId: shop.tenant.id, draftId: draft.id, contentType: 'image/jpeg', data: JPEG })
+    .returning()
+  return photo
+}
+
+// A photo the technician took on this visit.
+async function addWorkPhoto(shop: Shop, jobId: string, stage: 'before' | 'after') {
+  const [photo] = await db
+    .insert(jobPhotos)
+    .values({
+      tenantId: shop.tenant.id,
+      jobId,
+      stage,
+      contentType: 'image/jpeg',
+      data: JPEG,
+      uploadedBy: shop.ana.id,
+    })
     .returning()
   return photo
 }
@@ -200,6 +226,65 @@ describe('GET /api/jobs/:jobId', () => {
     expect(wrongJob.body.error.message).toBe('That photo isn’t on this job.')
     await request(app).get(`/api/jobs/${job.id}/photos/${photo.id}`).expect(401)
   })
+
+  it("shows the technician's before and after photos, apart from the homeowner's", async () => {
+    const shop = await createShop('desert')
+    const job = await createJob(shop, { technicianId: shop.ana.id, status: 'in_progress' })
+    const booking = await addBookingPhoto(shop, job.id, 'token-a')
+    const before = await addWorkPhoto(shop, job.id, 'before')
+    const after = await addWorkPhoto(shop, job.id, 'after')
+
+    const res = await request(app).get(`/api/jobs/${job.id}`).set('Cookie', shop.cookie).expect(200)
+
+    expect(res.body.photos).toEqual([
+      { id: booking.id, url: `/jobs/${job.id}/photos/${booking.id}` },
+    ])
+    expect(res.body.workPhotos).toEqual({
+      before: [{ id: before.id, url: `/jobs/${job.id}/work-photos/${before.id}` }],
+      after: [{ id: after.id, url: `/jobs/${job.id}/work-photos/${after.id}` }],
+    })
+  })
+
+  it('has empty technician photo groups when there are none', async () => {
+    const shop = await createShop('desert')
+    const job = await createJob(shop)
+
+    const res = await request(app).get(`/api/jobs/${job.id}`).set('Cookie', shop.cookie).expect(200)
+
+    expect(res.body.workPhotos).toEqual({ before: [], after: [] })
+  })
+
+  it("serves the technician's photos to staff of that contractor only", async () => {
+    const shop = await createShop('desert')
+    const other = await createShop('other')
+    const job = await createJob(shop, { technicianId: shop.ana.id, status: 'in_progress' })
+    const otherJob = await createJob(shop, {
+      technicianId: shop.ana.id,
+      status: 'in_progress',
+      at: `${TUESDAY} 12:00`,
+    })
+    const photo = await addWorkPhoto(shop, job.id, 'before')
+    const otherPhoto = await addWorkPhoto(shop, otherJob.id, 'after')
+    const url = `/api/jobs/${job.id}/work-photos/${photo.id}`
+
+    const image = await request(app).get(url).set('Cookie', shop.cookie).expect(200)
+    expect(image.headers['content-type']).toBe('image/jpeg')
+    expect(image.headers['x-content-type-options']).toBe('nosniff')
+    expect(image.headers['cache-control']).toBe('private, max-age=31536000, immutable')
+    expect(Buffer.compare(image.body, JPEG)).toBe(0)
+
+    const wrongJob = await request(app)
+      .get(`/api/jobs/${job.id}/work-photos/${otherPhoto.id}`)
+      .set('Cookie', shop.cookie)
+      .expect(404)
+    expect(wrongJob.body.error.message).toBe('That photo isn’t on this job.')
+    await request(app).get(url).set('Cookie', other.cookie).expect(404)
+    await request(app).get(url).expect(401)
+    await request(app)
+      .get(url)
+      .set('Cookie', await signInTechnician(shop.ana))
+      .expect(403)
+  })
 })
 
 describe('PUT /api/jobs/:jobId/slot', () => {
@@ -225,6 +310,35 @@ describe('PUT /api/jobs/:jobId/slot', () => {
     })
     const audit = await db.select().from(auditEvents)
     expect(audit.map((event) => event.action)).toEqual(['job.assigned'])
+  })
+
+  it('texts the technician a link to the job when assigned, moved or reassigned', async () => {
+    const shop = await createShop('desert')
+    const job = await createJob(shop)
+    const put = (body: object) =>
+      request(app).put(`/api/jobs/${job.id}/slot`).set('Cookie', shop.cookie).send(body).expect(200)
+    const texts = () => db.select().from(messages).orderBy(asc(messages.createdAt))
+
+    await put({ date: TUESDAY, windowId: shop.tueMorning.id, technicianId: shop.mike.id })
+    await put({ date: TUESDAY, windowId: shop.tueAfternoon.id, technicianId: shop.mike.id })
+    // Nothing changed: no text.
+    await put({ date: TUESDAY, windowId: shop.tueAfternoon.id, technicianId: shop.mike.id })
+    await put({ date: TUESDAY, windowId: shop.tueAfternoon.id, technicianId: shop.ana.id })
+    // Unassigning texts nobody.
+    await put({ date: TUESDAY, windowId: shop.tueAfternoon.id, technicianId: null })
+
+    const sent = await texts()
+    const link = `https://desert.${env.APP_DOMAIN}/jobs/${job.id}`
+    expect(sent.map((text) => [text.contact, text.kind, text.toUserId, text.jobId])).toEqual([
+      [shop.mike.phone, 'job_assigned', shop.mike.id, job.id],
+      [shop.mike.phone, 'job_assigned', shop.mike.id, job.id],
+      [shop.ana.phone, 'job_assigned', shop.ana.id, job.id],
+    ])
+    expect(sent[0].body).toContain('New job')
+    expect(sent[0].body).toContain(link)
+    expect(sent[1].body).toContain('Job changed')
+    expect(sent[1].body).toContain('12 PM-4 PM')
+    expect(sent[2].body).toContain('New job')
   })
 
   it('moves a job to another day and unassigns it, refreshing both days', async () => {

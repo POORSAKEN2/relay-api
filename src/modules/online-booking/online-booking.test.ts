@@ -513,7 +513,7 @@ describe('POST /api/online-booking/callbacks', () => {
     const res = await post('callbacks', { name: '', phone: '555', zip: '9021' }).expect(400)
     expect(res.body.error.details).toEqual({
       name: ['Enter your name'],
-      phone: ['Enter a 10-digit phone number'],
+      phone: ['Enter a mobile number, like 0917 123 4567'],
       zip: ['Enter a 5-digit ZIP code'],
     })
   })

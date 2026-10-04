@@ -12,7 +12,9 @@ import { bookingRoutes } from './modules/booking/booking.routes.ts'
 import { brandingRoutes } from './modules/branding/branding.routes.ts'
 import { catalogRoutes } from './modules/catalog/catalog.routes.ts'
 import { customersRoutes } from './modules/customers/customers.routes.ts'
+import { importsRoutes } from './modules/customers/imports.routes.ts'
 import { dispatchRoutes } from './modules/dispatch/dispatch.routes.ts'
+import { webhooksRoutes } from './modules/messaging/webhooks.routes.ts'
 import { onlineBookingRoutes } from './modules/online-booking/online-booking.routes.ts'
 import { settingsRoutes } from './modules/settings/settings.routes.ts'
 import { teamRoutes } from './modules/team/team.routes.ts'
@@ -36,6 +38,9 @@ export function createApp() {
     }),
   )
   app.use(cors({ origin: checkOrigin, credentials: true, maxAge: 600 }))
+  // A spreadsheet import sends up to 5,000 rows at once; every other route keeps the default
+  // limit. The default parser below skips bodies this one already read.
+  app.use('/api/customers/imports', express.json({ limit: '5mb' }))
   app.use(express.json())
 
   app.get('/health', (_req, res) => {
@@ -47,6 +52,8 @@ export function createApp() {
     brandingRoutes,
     bookingRoutes,
     catalogRoutes,
+    // before customersRoutes: '/customers/imports' isn't a customer id
+    importsRoutes,
     customersRoutes,
     dispatchRoutes,
     onlineBookingRoutes,
@@ -54,6 +61,7 @@ export function createApp() {
     teamRoutes,
     technicianJobsRoutes,
     tenantsRoutes,
+    webhooksRoutes,
   )
 
   app.use((_req, res) => {
