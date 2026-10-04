@@ -9,6 +9,7 @@ import {
 import { HttpError } from '../../lib/http-error.ts'
 import { photoTypeOf } from '../../lib/image-type.ts'
 import { formatDay, formatWindow, textWindow } from '../../lib/labels.ts'
+import { newLinkToken } from '../../lib/link-token.ts'
 import { tenantUrl } from '../../lib/tenant-url.ts'
 import { emitToTenant } from '../../realtime/index.ts'
 import * as audit from '../audit/audit.queries.ts'
@@ -245,6 +246,8 @@ export async function joinWaitlist(tenantId: string, input: WaitlistInput, ip: s
 export async function bookVisit(tenant: Tenant, input: BookingInput, ip: string | null) {
   // The fee applies only when the contractor offers priority service and the homeowner chose it.
   const priorityFeeCents = input.priorityService ? tenant.priorityFeeCents : 0
+  // The homeowner's private link to change or cancel; only its hash is stored.
+  const manageLink = newLinkToken()
 
   const job = await db.transaction(async (tx) => {
     const service = await checkServiceAndZip(tenant.id, input.serviceId, input.zip, tx)
@@ -280,6 +283,7 @@ export async function bookVisit(tenant: Tenant, input: BookingInput, ip: string 
         problem: input.problem,
         systemType: input.systemType,
         vulnerableOccupant: input.vulnerableOccupant,
+        manageLinkHash: manageLink.hash,
         ...slot,
       },
       tx,
@@ -305,6 +309,7 @@ export async function bookVisit(tenant: Tenant, input: BookingInput, ip: string 
       state: input.state,
       zip: input.zip,
       priorityFeeCents,
+      manageUrl: tenantUrl(tenant, `/manage/${manageLink.token}`),
     }
     const about = { kind: 'booking_confirmation' as const, jobId: job.id, customerId: customer.id }
     await sendText(
@@ -427,10 +432,17 @@ async function recordConsent(
 
 // Takes a place in the window like the office does, but never over the cap, never in a window
 // that already started, and without telling a homeowner how many jobs are booked.
-async function reserveOpenWindow(tx: Tx, tenantId: string, windowId: string, date: string) {
+// `excludeJobId`: a visit being moved doesn't count against its own new window.
+export async function reserveOpenWindow(
+  tx: Tx,
+  tenantId: string,
+  windowId: string,
+  date: string,
+  excludeJobId?: string,
+) {
   let slot: Awaited<ReturnType<typeof reserveWindow>>
   try {
-    slot = await reserveWindow(tx, tenantId, windowId, date, { allowOverCap: false })
+    slot = await reserveWindow(tx, tenantId, windowId, date, { allowOverCap: false, excludeJobId })
   } catch (error) {
     if (error instanceof HttpError && error.code === 'window_full') {
       throw new HttpError(

@@ -20,6 +20,7 @@ import {
   waitlistEntries,
 } from '../../db/schema.ts'
 import { weekdayOf } from '../../lib/labels.ts'
+import { hashLinkToken } from '../../lib/link-token.ts'
 import { emitToTenant } from '../../realtime/index.ts'
 import { CONSENT_WORDING, expireHolds, WAITLIST_CONSENT_WORDING } from './online-booking.service.ts'
 
@@ -376,13 +377,29 @@ describe('POST /api/online-booking/bookings', () => {
         kind: 'booking_confirmation',
         status: 'queued',
         contact: '+14805550199',
-        body: "desert HVAC: you're booked for AC repair on Tue, Jan 8, 8 AM - 12 PM at 4 Cactus Rd. Pay at the visit. Reply STOP to opt out.",
+        body: expect.stringMatching(
+          /^desert HVAC: you're booked for AC repair on Tue, Jan 8, 8 AM - 12 PM at 4 Cactus Rd\. Pay at the visit\. Change or cancel: https:\/\/desert\.localhost\/manage\/[\w-]{24} Reply STOP to opt out\.$/,
+        ),
         jobId: res.body.jobId,
       }),
     ])
     expect(sent[0].customerId).toBe(sent[1].customerId)
     expect(sent[0].body).toContain('Address: 4 Cactus Rd, Mesa, AZ 85201')
     expect(sent[0].body).toContain('Questions? Call (480) 555-0100 or reply to this email.')
+  })
+
+  it('gives the visit a private link to change or cancel it', async () => {
+    const shop = await createServingShop()
+
+    const res = await post('bookings', bookingBody(shop)).expect(201)
+
+    const [job] = await db.select().from(jobs).where(eq(jobs.id, res.body.jobId))
+    const sent = await db.select().from(messages).orderBy(asc(messages.channel))
+    const url = /https:\/\/desert\.localhost\/manage\/([\w-]{24})/.exec(sent[1].body)
+    expect(url).not.toBeNull()
+    // Only the hash is stored.
+    expect(job.manageLinkHash).toBe(hashLinkToken(url![1]))
+    expect(sent[0].body).toContain(`Need to change or cancel? ${url![0]}`)
   })
 
   it('keeps the text from someone who didn’t agree to texts, and skips a blank email', async () => {
