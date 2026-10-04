@@ -8,15 +8,17 @@ import {
 } from '../../db/schema.ts'
 import { HttpError } from '../../lib/http-error.ts'
 import { photoTypeOf } from '../../lib/image-type.ts'
-import { formatDay, formatWindow } from '../../lib/labels.ts'
+import { formatDay, formatWindow, textWindow } from '../../lib/labels.ts'
 import { tenantUrl } from '../../lib/tenant-url.ts'
 import { emitToTenant } from '../../realtime/index.ts'
 import * as audit from '../audit/audit.queries.ts'
 import * as booking from '../booking/booking.queries.ts'
 import { insertBookedJob, reserveWindow } from '../booking/booking.service.ts'
 import * as customers from '../customers/customers.queries.ts'
+import { sendEmail } from '../messaging/email.ts'
 import { sendText } from '../messaging/sms.ts'
 import { zipIsServed } from '../settings/settings.queries.ts'
+import { type Confirmation, confirmationEmail, confirmationText } from './confirmation.ts'
 import * as queries from './online-booking.queries.ts'
 import type {
   BookingInput,
@@ -245,7 +247,7 @@ export async function bookVisit(tenant: Tenant, input: BookingInput, ip: string 
   const priorityFeeCents = input.priorityService ? tenant.priorityFeeCents : 0
 
   const job = await db.transaction(async (tx) => {
-    await checkServiceAndZip(tenant.id, input.serviceId, input.zip, tx)
+    const service = await checkServiceAndZip(tenant.id, input.serviceId, input.zip, tx)
     const slot = await reserveOpenWindow(tx, tenant.id, input.windowId, input.date)
 
     const customer = await findOrAddCustomer(tenant.id, input, tx)
@@ -285,6 +287,37 @@ export async function bookVisit(tenant: Tenant, input: BookingInput, ip: string 
 
     if (input.consent) {
       await recordConsent(tenant.id, { phone: input.phone, granted: true, ip, jobId: job.id }, tx)
+    }
+
+    // The homeowner's confirmation, saved with the booking so a refused booking sends nothing.
+    // sendText() blocks the text if they never agreed to texts.
+    const confirmation: Confirmation = {
+      tenantName: tenant.name,
+      contactPhone: tenant.contactPhone,
+      currency: tenant.currency,
+      customerName: input.name,
+      serviceName: service.name,
+      dayLabel: formatDay(input.date),
+      windowLabel: textWindow(slot.windowStartsAt, slot.windowEndsAt, tenant.timezone),
+      street: input.street,
+      unit: input.unit || null,
+      city: input.city,
+      state: input.state,
+      zip: input.zip,
+      priorityFeeCents,
+    }
+    const about = { kind: 'booking_confirmation' as const, jobId: job.id, customerId: customer.id }
+    await sendText(
+      tenant.id,
+      { ...about, contact: input.phone, body: confirmationText(confirmation) },
+      tx,
+    )
+    if (input.email) {
+      await sendEmail(
+        tenant.id,
+        { ...about, contact: input.email, ...confirmationEmail(confirmation) },
+        tx,
+      )
     }
     // The booking this draft was for is made. An unknown token is ignored: a draft must never
     // stop a booking.
@@ -357,10 +390,10 @@ function bookingLink(
 }
 
 async function checkServiceAndZip(tenantId: string, serviceId: string, zip: string, tx: Db) {
-  if (!(await booking.findActiveService(tenantId, serviceId, tx))) {
-    throw new HttpError(404, 'not_found', SERVICE_GONE)
-  }
+  const service = await booking.findActiveService(tenantId, serviceId, tx)
+  if (!service) throw new HttpError(404, 'not_found', SERVICE_GONE)
   await checkZipServed(tenantId, zip, tx)
+  return service
 }
 
 async function checkZipServed(tenantId: string, zip: string, tx: Db = db) {

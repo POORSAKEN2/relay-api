@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { asc, eq } from 'drizzle-orm'
 import request from 'supertest'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createJob, createShop, resetDb, type Shop, TUESDAY } from '../../../test/helpers.ts'
@@ -12,6 +12,7 @@ import {
   customers,
   jobItems,
   jobs,
+  messages,
   properties,
   serviceAreaZips,
   services,
@@ -350,6 +351,53 @@ describe('POST /api/online-booking/bookings', () => {
       code: 'window_full',
       message: 'That arrival window just filled up. Pick another one.',
     })
+    // The refused booking saved no confirmation: only the two booked ones have theirs.
+    expect(await db.select().from(messages)).toHaveLength(4)
+  })
+
+  it('texts and emails the homeowner a confirmation', async () => {
+    const shop = await createServingShop()
+
+    const res = await post('bookings', bookingBody(shop)).expect(201)
+
+    // 'email' sorts before 'sms'.
+    const sent = await db.select().from(messages).orderBy(asc(messages.channel))
+    expect(sent).toEqual([
+      expect.objectContaining({
+        channel: 'email',
+        kind: 'booking_confirmation',
+        status: 'queued',
+        contact: 'sam@example.com',
+        subject: 'Your visit is booked: Tue, Jan 8',
+        jobId: res.body.jobId,
+      }),
+      expect.objectContaining({
+        channel: 'sms',
+        kind: 'booking_confirmation',
+        status: 'queued',
+        contact: '+14805550199',
+        body: "desert HVAC: you're booked for AC repair on Tue, Jan 8, 8 AM - 12 PM at 4 Cactus Rd. Pay at the visit. Reply STOP to opt out.",
+        jobId: res.body.jobId,
+      }),
+    ])
+    expect(sent[0].customerId).toBe(sent[1].customerId)
+    expect(sent[0].body).toContain('Address: 4 Cactus Rd, Mesa, AZ 85201')
+    expect(sent[0].body).toContain('Questions? Call (480) 555-0100 or reply to this email.')
+  })
+
+  it('keeps the text from someone who didn’t agree to texts, and skips a blank email', async () => {
+    const shop = await createServingShop()
+
+    await post('bookings', bookingBody(shop, { consent: false, email: '' })).expect(201)
+
+    expect(await db.select().from(messages)).toEqual([
+      expect.objectContaining({
+        channel: 'sms',
+        kind: 'booking_confirmation',
+        status: 'blocked',
+        blockedReason: 'no_consent',
+      }),
+    ])
   })
 
   it('refuses a date in the past', async () => {

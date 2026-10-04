@@ -22,7 +22,7 @@ export function listActiveServices(tenantId: string) {
 
 export async function findActiveService(tenantId: string, serviceId: string, tx: Db = db) {
   const [service] = await tx
-    .select({ id: services.id })
+    .select({ id: services.id, name: services.name })
     .from(services)
     .where(
       and(eq(services.tenantId, tenantId), eq(services.id, serviceId), isNull(services.archivedAt)),
