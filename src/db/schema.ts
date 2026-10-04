@@ -49,6 +49,9 @@ function e164(column: Column) {
 
 export const PAYMENT_PROVIDERS = ['xendit', 'stripe'] as const
 
+// Relay's own subscription, kept in step by RevenueCat's webhook (billing module).
+export const SUBSCRIPTION_STATUSES = ['none', 'active', 'billing_issue', 'expired'] as const
+
 // =====================================================================
 // 1 · White-label setup   13 · Ownership and accounts
 // =====================================================================
@@ -91,6 +94,12 @@ export const tenants = pgTable(
     // Relay billing
     monthlyFeeCents: integer('monthly_fee_cents').notNull().default(0),
     perJobFeeCents: integer('per_job_fee_cents').notNull().default(0), // per recovered job
+    // Relay subscription (RevenueCat). The event time lets a late webhook be ignored.
+    subscriptionStatus: text('subscription_status', { enum: SUBSCRIPTION_STATUSES })
+      .notNull()
+      .default('none'),
+    subscriptionExpiresAt: timestamptz('subscription_expires_at'),
+    subscriptionEventAt: timestamptz('subscription_event_at'),
     createdAt: createdAt(),
   },
   (t) => [
@@ -109,6 +118,7 @@ export const tenants = pgTable(
     check('tenants_quiet_hours_window', sql`${t.quietHoursStart} <> ${t.quietHoursEnd}`),
     check('tenants_payment_provider_valid', oneOf(t.paymentProvider, PAYMENT_PROVIDERS)),
     check('tenants_fees_not_negative', sql`${t.monthlyFeeCents} >= 0 and ${t.perJobFeeCents} >= 0`),
+    check('tenants_subscription_status_valid', oneOf(t.subscriptionStatus, SUBSCRIPTION_STATUSES)),
   ],
 )
 
@@ -1310,7 +1320,7 @@ export const auditEvents = pgTable(
   ],
 )
 
-export const WEBHOOK_PROVIDERS = ['twilio', 'xendit', 'stripe', 'httpsms'] as const
+export const WEBHOOK_PROVIDERS = ['twilio', 'xendit', 'stripe', 'httpsms', 'revenuecat'] as const
 
 // Webhook dedupe: insert first; a conflict means this event was already handled.
 export const webhookEvents = pgTable(
