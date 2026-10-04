@@ -18,6 +18,13 @@ export const tenantFromHost: RequestHandler = async (req, _res, next) => {
   const host = parseTenantHost(req.get('x-tenant-host') ?? '', env.APP_DOMAIN)
   const tenant = host ? await findTenantByHost(host) : undefined
   if (!tenant) throw new HttpError(404, 'not_found', 'Contractor not found')
+  if (tenant.status === 'suspended') {
+    throw new HttpError(
+      410,
+      'contractor_unavailable',
+      'This contractor is not taking bookings right now',
+    )
+  }
   req.tenant = tenant
   next()
 }
