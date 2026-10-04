@@ -60,6 +60,7 @@ export async function getVisit(tenant: Tenant, token: string) {
     status: job.status,
     serviceName: job.serviceName,
     date: job.date,
+    windowId: job.windowId,
     dayLabel: formatDay(job.date),
     windowLabel: formatWindow(job.localStart, job.localEnd),
     address: addressLine(job),

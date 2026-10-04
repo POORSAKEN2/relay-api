@@ -1,7 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import { type Db, db } from '../../db/client.ts'
-import { customers, jobs, properties, services, tenants } from '../../db/schema.ts'
-import { local } from '../dispatch/dispatch.queries.ts'
+import { arrivalWindows, customers, jobs, properties, services, tenants } from '../../db/schema.ts'
+import { local, matchingWindow } from '../dispatch/dispatch.queries.ts'
 
 // Tenant-scoped, like every query: a link only works on its own contractor's address.
 
@@ -15,6 +15,7 @@ export async function findManagedJob(tenantId: string, linkHash: string, tx: Db 
       windowStartsAt: jobs.windowStartsAt,
       windowEndsAt: jobs.windowEndsAt,
       date: local(jobs.windowStartsAt, 'YYYY-MM-DD'),
+      windowId: arrivalWindows.id, // null if the contractor changed the window since
       localStart: local(jobs.windowStartsAt, 'HH24:MI:SS'),
       localEnd: local(jobs.windowEndsAt, 'HH24:MI:SS'),
       serviceName: services.name,
@@ -33,6 +34,7 @@ export async function findManagedJob(tenantId: string, linkHash: string, tx: Db 
     .innerJoin(services, eq(services.id, jobs.serviceId))
     .innerJoin(properties, eq(properties.id, jobs.propertyId))
     .innerJoin(customers, eq(customers.id, jobs.customerId))
+    .leftJoin(arrivalWindows, matchingWindow)
     .where(and(eq(jobs.tenantId, tenantId), eq(jobs.manageLinkHash, linkHash)))
   return job
 }

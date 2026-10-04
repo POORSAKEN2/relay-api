@@ -73,6 +73,7 @@ describe('GET /api/online-booking/manage/:token', () => {
       status: 'booked',
       serviceName: 'AC repair',
       date: TUESDAY,
+      windowId: shop.tueMorning.id,
       dayLabel: 'Tue, Jan 8',
       windowLabel: '8 AM–12 PM',
       address: '12 Palm St, Phoenix, AZ 85004',
