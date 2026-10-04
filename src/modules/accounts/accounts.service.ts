@@ -36,6 +36,10 @@ export async function signIn(email: string, password: string) {
   if (!user?.passwordHash || !passwordOk) {
     throw new HttpError(401, 'unauthorized', 'Wrong email or password')
   }
+  // Only after the password, so this answer doesn't reveal which emails have accounts.
+  if (user.tenantId && (await queries.findTenantStatus(user.tenantId)) === 'suspended') {
+    throw contractorSuspended()
+  }
   return startSession(user)
 }
 
@@ -51,7 +55,7 @@ async function startSession(user: User) {
 // response time can still differ slightly.
 export async function requestSignInCode(phone: string) {
   const found = await queries.findTechnicianByPhone(phone)
-  if (!found) return
+  if (!found || found.tenantStatus === 'suspended') return
 
   // At most 5 codes an hour per phone: each text costs money and could pester someone.
   // Codes over an hour old are deleted here, so the table needs no cleanup job.
@@ -90,11 +94,20 @@ export async function signInWithCode(phone: string, typedCode: string) {
   if (!(await queries.spendCodeTry(code.id, CODE_TRIES, now))) throw wrongCode()
   if (!sameHash(hashCode(typedCode), code.codeHash)) throw wrongCode()
   if (!(await queries.markCodeUsed(code.id, now))) throw wrongCode()
+  if (found.tenantStatus === 'suspended') throw contractorSuspended()
   return startSession(found.user)
 }
 
 function wrongCode() {
   return new HttpError(401, 'unauthorized', 'That code is wrong or has expired. Ask for a new one.')
+}
+
+function contractorSuspended() {
+  return new HttpError(
+    403,
+    'contractor_suspended',
+    'Your company’s account is turned off. Contact Relay support.',
+  )
 }
 
 // Compares two hex hashes in constant time, so response timing gives nothing away.

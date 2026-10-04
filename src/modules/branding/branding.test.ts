@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { createTenant, createUser, resetDb, signIn } from '../../../test/helpers.ts'
 import { createApp } from '../../app.ts'
 import { db } from '../../db/client.ts'
-import { brandingVersions } from '../../db/schema.ts'
+import { brandingAssets, brandingVersions, tenants } from '../../db/schema.ts'
 import { DEFAULT_COLORS } from './branding.service.ts'
 
 const app = createApp()
@@ -51,6 +51,20 @@ describe('GET /api/branding', () => {
 
     expect(desertRes.body.primaryColor).toBe('#0f766e')
     expect(otherRes.body.primaryColor).toBe(DEFAULT_COLORS.primaryColor)
+  })
+
+  it('answers 410 for a turned-off contractor', async () => {
+    const desert = await createTenant('desert')
+    await db.update(tenants).set({ status: 'suspended' }).where(eq(tenants.id, desert.id))
+
+    const res = await request(app)
+      .get('/api/branding')
+      .set('X-Tenant-Host', 'desert.localhost')
+      .expect(410)
+    expect(res.body.error).toEqual({
+      code: 'contractor_unavailable',
+      message: 'This contractor is not taking bookings right now',
+    })
   })
 })
 
@@ -140,16 +154,79 @@ describe('GET /api/admin/tenants/:tenantId/branding', () => {
   })
 })
 
-describe('GET /api/admin/tenants', () => {
-  it('lists contractors by name for a superadmin', async () => {
-    await createTenant('desert')
-    await createTenant('other')
+describe('branding assets in versions', () => {
+  async function insertAsset(tenantId: string, createdBy: string, kind: 'logo' | 'favicon') {
+    const [asset] = await db
+      .insert(brandingAssets)
+      .values({
+        tenantId,
+        kind,
+        contentType: 'image/svg+xml',
+        data: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'),
+        createdBy,
+      })
+      .returning()
+    return asset
+  }
+
+  it('gives logo and favicon paths under the API', async () => {
+    const desert = await createTenant('desert')
     const admin = await createUser('superadmin', null)
+    const logo = await insertAsset(desert.id, admin.id, 'logo')
+    const favicon = await insertAsset(desert.id, admin.id, 'favicon')
+    await db.insert(brandingVersions).values({
+      tenantId: desert.id,
+      ...DEFAULT_COLORS,
+      logoAssetId: logo.id,
+      faviconAssetId: favicon.id,
+      createdBy: admin.id,
+    })
+
+    const res = await request(app).get('/api/branding').set('X-Tenant-Host', 'desert.localhost')
+
+    expect(res.body.logoUrl).toBe(`/branding/assets/${logo.id}`)
+    expect(res.body.faviconUrl).toBe(`/branding/assets/${favicon.id}`)
+  })
+
+  it('keeps the logo and favicon when the colors are saved', async () => {
+    const desert = await createTenant('desert')
+    const admin = await createUser('superadmin', null)
+    const logo = await insertAsset(desert.id, admin.id, 'logo')
+    const favicon = await insertAsset(desert.id, admin.id, 'favicon')
+    await db.insert(brandingVersions).values({
+      tenantId: desert.id,
+      ...DEFAULT_COLORS,
+      logoAssetId: logo.id,
+      faviconAssetId: favicon.id,
+      createdBy: admin.id,
+    })
 
     const res = await request(app)
-      .get('/api/admin/tenants')
+      .put(`/api/admin/tenants/${desert.id}/branding`)
       .set('Cookie', await signIn(admin.email))
+      .send({ primaryColor: '#111111', accentColor: '#222222' })
       .expect(200)
-    expect(res.body.tenants.map((t: { slug: string }) => t.slug)).toEqual(['desert', 'other'])
+
+    expect(res.body).toMatchObject({
+      primaryColor: '#111111',
+      logoUrl: `/branding/assets/${logo.id}`,
+      faviconUrl: `/branding/assets/${favicon.id}`,
+    })
+  })
+
+  it("refuses a version that points at another contractor's asset", async () => {
+    const desert = await createTenant('desert')
+    const other = await createTenant('other')
+    const admin = await createUser('superadmin', null)
+    const othersLogo = await insertAsset(other.id, admin.id, 'logo')
+
+    await expect(
+      db.insert(brandingVersions).values({
+        tenantId: desert.id,
+        ...DEFAULT_COLORS,
+        logoAssetId: othersLogo.id,
+        createdBy: admin.id,
+      }),
+    ).rejects.toThrow()
   })
 })

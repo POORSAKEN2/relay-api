@@ -6,6 +6,7 @@ const HexColor = z
   .toLowerCase()
 
 export const TenantParams = z.object({ tenantId: z.uuid() })
+export const VersionParams = z.object({ tenantId: z.uuid(), versionId: z.uuid() })
 
 export const BrandingInput = z.object({ primaryColor: HexColor, accentColor: HexColor })
 export type BrandingInput = z.infer<typeof BrandingInput>
