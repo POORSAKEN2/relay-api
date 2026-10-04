@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNull, lt, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm'
 import { type Db, db } from '../../db/client.ts'
 import {
   bookingDrafts,
@@ -192,9 +192,10 @@ export async function findDraftPhoto(token: string, photoId: string) {
   return photo
 }
 
-// Every contractor's drafts that are due their one recovery text: consent given, nothing from
-// the homeowner since `quietSince`, begun after `startedAfter`, not booked, not texted yet, and
-// no job made for that phone since the draft began (they may have called the office instead).
+// Every turned-on contractor's drafts that are due their one recovery text: consent given,
+// nothing from the homeowner since `quietSince`, begun after `startedAfter`, not booked, not
+// texted yet, and no job made for that phone since the draft began (they may have called the
+// office instead).
 export function listDraftsToRecover(quietSince: Date, startedAfter: Date) {
   return db
     .select({
@@ -211,6 +212,7 @@ export function listDraftsToRecover(quietSince: Date, startedAfter: Date) {
     .innerJoin(tenants, eq(tenants.id, bookingDrafts.tenantId))
     .where(
       and(
+        ne(tenants.status, 'suspended'),
         eq(bookingDrafts.smsConsent, true),
         isNull(bookingDrafts.bookedJobId),
         isNull(bookingDrafts.recoveryTextedAt),
