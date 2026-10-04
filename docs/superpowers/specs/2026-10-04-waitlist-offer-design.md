@@ -48,13 +48,14 @@ Migration `0014_waitlist_offers.sql`. On `waitlist_entries`:
 
 | Column | Type | Meaning |
 | --- | --- | --- |
-| `ends_at` | `timestamptz not null` | When the entry is taken off: joined (or joined again) + 14 days. Backfilled as `created_at + 14 days`. |
-| `offer_window_id` | `uuid` | The window offered (FK `(tenant_id, offer_window_id)` → `arrival_windows`) |
+| `ends_at` | `timestamptz not null default now() + 14 days` | When the entry is taken off: joined (or joined again) + 14 days. Existing rows get the default. |
+| `offer_window_id` | `uuid` | The window offered. No foreign key: the office may delete a window in settings, and then the offer link's booking fails like any booking for a deleted window. |
 | `offer_date` | `date` | The day offered |
 | `offer_window_starts_at` | `timestamptz` | Start of the offered place, matched against `jobs.window_starts_at` when counting |
 | `offer_expires_at` | `timestamptz` | Offer time + 30 minutes |
 | `offer_link_hash` | `text unique` | sha256 of the link token (`newLinkToken()`), as for the manage link |
 | `offers_missed` | `smallint not null default 0` | Offers that ran out: 0, 1 or 2 |
+| `missed_window_starts_at` | `timestamptz` | The place of the offer that last ran out. That place goes to the next homeowner in line instead of straight back to this one. |
 
 - `WAITLIST_STATUSES` gains `expired`: `waiting`, `offered`, `booked`, `removed`, `expired`.
   `removed` = texted STOP; `expired` = 14 days or 2 missed offers.
@@ -63,7 +64,7 @@ Migration `0014_waitlist_offers.sql`. On `waitlist_entries`:
 - Index `waitlist_entries_offered_idx` on `(tenant_id, offer_window_starts_at)` where
   `status = 'offered'`, for the counts below.
 
-`ends_at` is the only column not shown in the design talk: it lets joining again restart the
+`ends_at` and `missed_window_starts_at` are the columns not shown in the design talk. `ends_at` lets joining again restart the
 14 days without moving the homeowner's place in line (`created_at` stays).
 
 ## The hold
@@ -85,7 +86,7 @@ Two counts add open offers to the window's active jobs:
 ## The job: `sendWaitlistOffers()`
 
 In `src/modules/online-booking/waitlist.service.ts`, queries in `waitlist.queries.ts`. For each
-`live` tenant with `waiting` or `offered` entries, in this order. Each numbered step is its own
+tenant that is not `suspended` (like the booking-recovery job) with `waiting` or `offered` entries, in this order. Each numbered step is its own
 transaction per entry, so a failure leaves nothing half done (an offer always has its text).
 
 1. **Close finished entries** (`waiting` or `offered`):
@@ -101,7 +102,8 @@ transaction per entry, so a failure leaves nothing half done (an offer always ha
    - The open places: `listOpenWindows` for 14 days, keeping places whose start is at least
      **2 hours** from now. A window with 2 free places counts twice.
    - For each place, soonest first, the next `waiting` entry
-     (`order by priority desc, created_at`), locked with `for update skip locked`.
+     (`order by priority desc, created_at`), skipping one whose last missed offer was this
+     place, locked with `for update skip locked`.
    - In one transaction: `lockWindow` (as `reserveWindow` does, so a booking at that instant
      waits its turn), recount the place with offers; if it filled, skip it. Otherwise set the
      entry `offered` with its offer columns, and `sendText` the offer.
@@ -168,7 +170,8 @@ unknown token is ignored (the usual calendar).
 - Time step: the offered window is picked, with the note `Held for you until 3:42 PM`. The
   calendar comes from `windows?offer=`. Other open windows can be picked; they aren't held.
 - Details step: `offerToken` is sent with the booking.
-- Ended: a banner `This offer has ended. Pick another time below.` and the wizard starts as usual.
+- Ended: a banner `This offer has ended, but you can still book a time.` and the wizard starts as
+  usual.
 - An offer link wins over a saved draft in this browser.
 
 ## Errors
