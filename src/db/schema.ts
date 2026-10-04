@@ -781,7 +781,12 @@ export const jobPhotos = pgTable(
   ],
 )
 
-export const WAITLIST_STATUSES = ['waiting', 'offered', 'booked', 'removed'] as const
+// 'removed': texted STOP. 'expired': 14 days passed, or too many offers ran out.
+export const WAITLIST_STATUSES = ['waiting', 'offered', 'booked', 'removed', 'expired'] as const
+// How long a place offered from the waitlist is held, and how many offers may run out before
+// the homeowner is taken off.
+export const WAITLIST_OFFER_MINUTES = 30
+export const WAITLIST_MAX_MISSED = 2
 
 export const waitlistEntries = pgTable(
   'waitlist_entries',
@@ -795,6 +800,20 @@ export const waitlistEntries = pgTable(
     status: text('status', { enum: WAITLIST_STATUSES }).notNull().default('waiting'),
     offeredAt: timestamptz('offered_at'),
     createdAt: createdAt(),
+    // Joined (or joined again) + 14 days. created_at stays, so joining again keeps the place
+    // in line.
+    endsAt: timestamptz('ends_at').notNull().default(sql`now() + interval '14 days'`),
+    // The open offer, set only while status = 'offered'. No foreign key on the window: the
+    // office may delete one in settings, and the offer then just stops working.
+    offerWindowId: uuid('offer_window_id'),
+    offerDate: date('offer_date'),
+    offerWindowStartsAt: timestamptz('offer_window_starts_at'), // matched against jobs.window_starts_at
+    offerExpiresAt: timestamptz('offer_expires_at'),
+    offerLinkHash: text('offer_link_hash').unique(), // sha256 of the link's token
+    offersMissed: smallint('offers_missed').notNull().default(0),
+    // The place of the offer that last ran out, so it goes to the next homeowner in line
+    // instead of straight back to this one.
+    missedWindowStartsAt: timestamptz('missed_window_starts_at'),
   },
   (t) => [
     foreignKey({
@@ -809,9 +828,17 @@ export const waitlistEntries = pgTable(
     }),
     check('waitlist_entries_status_valid', oneOf(t.status, WAITLIST_STATUSES)),
     check('waitlist_entries_zip_format', sql`${t.zip} ~ '^[0-9]{5}$'`),
+    check(
+      'waitlist_entries_offer_complete',
+      sql`(${t.status} = 'offered') = (${t.offerWindowId} is not null and ${t.offerDate} is not null and ${t.offerWindowStartsAt} is not null and ${t.offerExpiresAt} is not null and ${t.offerLinkHash} is not null)`,
+    ),
+    check('waitlist_entries_offers_missed_range', sql`${t.offersMissed} between 0 and 2`),
     index('waitlist_entries_waiting_idx')
       .on(t.tenantId, t.createdAt)
       .where(sql`${t.status} = 'waiting'`),
+    index('waitlist_entries_offered_idx')
+      .on(t.tenantId, t.offerWindowStartsAt)
+      .where(sql`${t.status} = 'offered'`),
   ],
 )
 
