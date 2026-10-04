@@ -18,6 +18,7 @@ const DAY_MS = 24 * 60 * 60 * 1000
 const SESSION_DAYS = 30
 const RENEW_WHEN_DAYS_LEFT = 15
 const CODE_MINUTES = 10
+const LINK_DAYS = 7
 const CODES_PER_HOUR = 5
 const CODE_TRIES = 5
 
@@ -113,6 +114,33 @@ function contractorSuspended() {
 // Compares two hex hashes in constant time, so response timing gives nothing away.
 function sameHash(a: string, b: string): boolean {
   return timingSafeEqual(Buffer.from(a, 'hex'), Buffer.from(b, 'hex'))
+}
+
+// A one-time link for an owner or office user to sign in with: the invite, or a new link when
+// they have no password to fall back on. Only the newest link a user has can be used.
+// Returns the token to put in the emailed link.
+export async function createSignInLink(userId: string): Promise<string> {
+  const token = randomBytes(32).toString('base64url')
+  await queries.replaceLink(userId, {
+    tokenHash: hashToken(token),
+    expiresAt: new Date(Date.now() + LINK_DAYS * DAY_MS),
+  })
+  return token
+}
+
+// Signs in with the emailed link, once. An unknown, used or expired link and a deactivated
+// user all get the same answer.
+export async function signInWithLink(token: string) {
+  const link = await queries.spendLink(hashToken(token), new Date())
+  const user = link && (await queries.findUserById(link.userId))
+  if (!user || user.disabledAt) {
+    throw new HttpError(
+      401,
+      'unauthorized',
+      'That link is wrong or has expired. Ask for a new one.',
+    )
+  }
+  return startSession(user)
 }
 
 // The session's user, or null if the token is unknown or expired.

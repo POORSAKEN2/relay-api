@@ -17,6 +17,7 @@ import { dispatchRoutes } from './modules/dispatch/dispatch.routes.ts'
 import { webhooksRoutes } from './modules/messaging/webhooks.routes.ts'
 import { onlineBookingRoutes } from './modules/online-booking/online-booking.routes.ts'
 import { settingsRoutes } from './modules/settings/settings.routes.ts'
+import { staffRoutes } from './modules/team/staff.routes.ts'
 import { teamRoutes } from './modules/team/team.routes.ts'
 import { technicianJobsRoutes } from './modules/technician-jobs/technician-jobs.routes.ts'
 import { tenantsRoutes } from './modules/tenants/tenants.routes.ts'
@@ -59,6 +60,7 @@ export function createApp() {
     onlineBookingRoutes,
     settingsRoutes,
     teamRoutes,
+    staffRoutes,
     technicianJobsRoutes,
     tenantsRoutes,
     webhooksRoutes,

@@ -7,7 +7,12 @@ import {
   readSessionToken,
   setSessionCookie,
 } from '../../middleware/auth.ts'
-import { PhoneCodeInput, PhoneSignInInput, SignInInput } from './accounts.schemas.ts'
+import {
+  LinkSignInInput,
+  PhoneCodeInput,
+  PhoneSignInInput,
+  SignInInput,
+} from './accounts.schemas.ts'
 import * as accounts from './accounts.service.ts'
 
 export const accountsRoutes = Router()
@@ -40,6 +45,14 @@ accountsRoutes.post('/auth/phone/code', signInLimit, async (req, res) => {
 accountsRoutes.post('/auth/phone/sign-in', signInLimit, async (req, res) => {
   const { phone, code } = PhoneSignInInput.parse(req.body)
   const session = await accounts.signInWithCode(phone, code)
+  setSessionCookie(res, session.token, session.expiresAt)
+  res.json({ user: session.user })
+})
+
+// Owner and office: the one-time link from the invite email.
+accountsRoutes.post('/auth/link/sign-in', signInLimit, async (req, res) => {
+  const { token } = LinkSignInInput.parse(req.body)
+  const session = await accounts.signInWithLink(token)
   setSessionCookie(res, session.token, session.expiresAt)
   res.json({ user: session.user })
 })

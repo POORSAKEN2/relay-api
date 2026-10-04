@@ -1,6 +1,6 @@
 import { and, count, desc, eq, gt, isNull, lt, ne, or, sql } from 'drizzle-orm'
 import { db } from '../../db/client.ts'
-import { sessions, signInCodes, tenants, type User, users } from '../../db/schema.ts'
+import { sessions, signInCodes, signInLinks, tenants, type User, users } from '../../db/schema.ts'
 
 // Users, sessions and sign-in codes are looked up before the contractor is known,
 // so these queries are not tenant-scoped.
@@ -130,4 +130,36 @@ export async function markCodeUsed(id: string, now: Date): Promise<boolean> {
     .where(and(eq(signInCodes.id, id), isNull(signInCodes.usedAt)))
     .returning({ id: signInCodes.id })
   return used.length > 0
+}
+
+export async function findUserById(id: string): Promise<User | undefined> {
+  const [user] = await db.select().from(users).where(eq(users.id, id)).limit(1)
+  return user
+}
+
+// Replaces the user's unused sign-in links with a new one: only the newest link works.
+export async function replaceLink(userId: string, values: { tokenHash: string; expiresAt: Date }) {
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(signInLinks)
+      .where(and(eq(signInLinks.userId, userId), isNull(signInLinks.usedAt)))
+    await tx.insert(signInLinks).values({ userId, ...values })
+  })
+}
+
+// Marks an unused, unexpired link used and returns whose it is; undefined if there is none.
+// One UPDATE, so two requests with the same link can't both win.
+export async function spendLink(tokenHash: string, now: Date) {
+  const [link] = await db
+    .update(signInLinks)
+    .set({ usedAt: now })
+    .where(
+      and(
+        eq(signInLinks.tokenHash, tokenHash),
+        isNull(signInLinks.usedAt),
+        gt(signInLinks.expiresAt, now),
+      ),
+    )
+    .returning({ userId: signInLinks.userId })
+  return link
 }

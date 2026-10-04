@@ -182,6 +182,23 @@ export const signInCodes = pgTable(
   (t) => [index('sign_in_codes_user_id_idx').on(t.userId)],
 )
 
+// A one-time sign-in link emailed to an owner or office user: the invite, or a new link later.
+// Only the hash is kept, like sessions.
+export const signInLinks = pgTable(
+  'sign_in_links',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull().unique(), // sha256 of the token in the emailed link
+    expiresAt: timestamptz('expires_at').notNull(),
+    usedAt: timestamptz('used_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [index('sign_in_links_user_id_idx').on(t.userId)],
+)
+
 export const PROFILE_PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const
 export const PROFILE_PHOTO_MAX_BYTES = 512 * 1024
 
