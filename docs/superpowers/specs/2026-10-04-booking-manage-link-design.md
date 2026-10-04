@@ -1,6 +1,6 @@
 # Booking manage link: the homeowner reschedules or cancels from a link
 
-Date: 2026-10-04. Status: draft. Plan: `docs/superpowers/plans/2026-10-04-booking-manage-link.md`.
+Date: 2026-10-04. Status: approved. Plan: `docs/superpowers/plans/2026-10-04-booking-manage-link.md`.
 Builds on: `2026-10-04-booking-confirmation-design.md` (the confirmation text and email carry
 the link).
 
@@ -59,12 +59,13 @@ hashLinkToken(token: string): string            // sha256, hex
 
 ## API
 
-New files `src/modules/online-booking/manage.service.ts`, `manage.routes.ts`,
-`manage.schemas.ts` (and `manage.queries.ts` for the lookup). Public like the booking page:
+New files `src/modules/online-booking/manage.service.ts` and `manage.queries.ts` (the lookup).
+The routes go in `online-booking.routes.ts` and `RescheduleInput` in `online-booking.schemas.ts`,
+beside the booking page's, sharing their rate limiter. Public like the booking page:
 `tenantFromHost`, no sign-in, the same `formLimit` (60 tries per 15 minutes per address).
 
 Every route finds the job by `(tenant from the host, hashLinkToken(token))`. No job → `404
-not_found` "This link doesn't work anymore. Call <phone> to make changes." The phone is the
+not_found` "This link doesn’t work anymore. Call <phone> to make changes." The phone is the
 tenant's `contactPhone`, formatted. A cancelled or done job has no hash, so its link is a 404.
 
 ### `GET /api/online-booking/manage/:token`
@@ -92,7 +93,7 @@ Body `{ date, windowId }` (same fields and messages as the booking form's).
 In one transaction:
 
 1. Lock the job (`lockJob` from dispatch queries) and check the rule: `booked` and not started,
-   else `409 cannot_change` "Your visit can't be changed online anymore. Call <phone>."
+   else `409 cannot_change` "Your visit can’t be changed online anymore. Call <phone>."
 2. Same day and window as now → nothing changes, `200`.
 3. `reserveWindow(tx, tenantId, windowId, date, { allowOverCap: false, excludeJobId })`, then
    refuse a window that already started; the same messages as booking (`window_full`
