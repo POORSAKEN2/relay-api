@@ -89,11 +89,22 @@ export function claimDueMessages(limit: number) {
       id: messages.id,
       tenantId: messages.tenantId,
       channel: messages.channel,
+      kind: messages.kind,
       contact: messages.contact,
       subject: messages.subject,
       body: messages.body,
       attempts: messages.attempts,
     })
+}
+
+// A claimed text that must wait for quiet hours: back to waiting until they end, and the
+// try claimDueMessages counted is given back. Status is left alone, so a STOP that blocked
+// it meanwhile still stands.
+export async function holdUntil(messageId: string, sendAfter: Date) {
+  await db
+    .update(messages)
+    .set({ sendAfter, attempts: sql`${messages.attempts} - 1` })
+    .where(eq(messages.id, messageId))
 }
 
 // The provider took it. The status stays 'queued' until the phone reports it sent.

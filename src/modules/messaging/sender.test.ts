@@ -179,3 +179,98 @@ describe('emails', () => {
     expect(await reload(email.id)).toMatchObject({ status: 'failed', attempts: 3 })
   })
 })
+
+describe('quiet hours', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function at(time: string) {
+    vi.setSystemTime(new Date(`2030-01-08T${time}-07:00`))
+  }
+
+  it('holds a reminder at 23:00 until 08:00 without counting a try', async () => {
+    const tenant = await shopWithPhone()
+    at('23:00:00')
+    const text = await queueText(tenant.id, { kind: 'reminder' })
+
+    await sendDueMessages()
+
+    expect(sendSms).not.toHaveBeenCalled()
+    expect(await reload(text.id)).toMatchObject({
+      status: 'queued',
+      attempts: 0,
+      sendAfter: new Date('2030-01-09T08:00:00-07:00'),
+    })
+  })
+
+  it('holds a reminder on attempts: 2 without failing it', async () => {
+    const tenant = await shopWithPhone()
+    at('23:00:00')
+    const text = await queueText(tenant.id, { kind: 'reminder', attempts: 2 })
+
+    await sendDueMessages()
+
+    expect(sendSms).not.toHaveBeenCalled()
+    expect(await reload(text.id)).toMatchObject({
+      status: 'queued',
+      attempts: 2,
+    })
+  })
+
+  it('hands on_my_way and job_assigned over at 23:00', async () => {
+    const tenant = await shopWithPhone()
+    at('23:00:00')
+    await queueText(tenant.id, { kind: 'on_my_way' })
+    await queueText(tenant.id, { kind: 'job_assigned' })
+
+    await sendDueMessages()
+
+    expect(sendSms).toHaveBeenCalledTimes(2)
+  })
+
+  it('holds new_booking_alert at 23:00 until 08:00', async () => {
+    const tenant = await shopWithPhone()
+    at('23:00:00')
+    const text = await queueText(tenant.id, { kind: 'new_booking_alert' })
+
+    await sendDueMessages()
+
+    expect(sendSms).not.toHaveBeenCalled()
+    expect(await reload(text.id)).toMatchObject({
+      status: 'queued',
+      attempts: 0,
+      sendAfter: new Date('2030-01-09T08:00:00-07:00'),
+    })
+  })
+
+  it('sends an email with kind reminder at 23:00', async () => {
+    const tenant = await createTenant('desert')
+    at('23:00:00')
+    const email = await queueText(tenant.id, {
+      channel: 'email',
+      contact: 'maria@example.com',
+      kind: 'reminder',
+      subject: 'Reminder',
+      body: 'See you tomorrow',
+    })
+
+    await sendDueMessages()
+
+    expect(sendEmail).toHaveBeenCalled()
+    expect(await reload(email.id)).toMatchObject({ status: 'sent' })
+  })
+
+  it('hands a reminder over at 14:00', async () => {
+    const tenant = await shopWithPhone()
+    at('14:00:00')
+    await queueText(tenant.id, { kind: 'reminder' })
+
+    await sendDueMessages()
+
+    expect(sendSms).toHaveBeenCalledTimes(1)
+  })
+})

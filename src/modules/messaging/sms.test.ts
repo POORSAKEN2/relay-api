@@ -69,6 +69,20 @@ it('holds unprompted texts until quiet hours end, but not visit texts', async ()
   expect((await savedText()).sendAfter.getTime()).toBeLessThan(Date.parse('2030-01-09'))
 })
 
+it('never holds staff texts or replies even at night', async () => {
+  const tenant = await createTenant('desert')
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date('2030-01-08T23:00:00-07:00'))
+
+  await sendText(tenant.id, { contact: PHONE, kind: 'job_assigned', body: 'New job' })
+  expect((await savedText()).sendAfter.getTime()).toBeLessThan(Date.parse('2030-01-09'))
+
+  await db.delete(messages)
+  await consent(tenant.id, true)
+  await sendText(tenant.id, { contact: PHONE, kind: 'text_back', body: 'Sorry we missed you' })
+  expect((await savedText()).sendAfter.getTime()).toBeLessThan(Date.parse('2030-01-09'))
+})
+
 it('sends a sign-in code at once and never stores it', async () => {
   const tenant = await createTenant('desert')
   await sendText(tenant.id, { contact: PHONE, kind: 'sign_in_code', body: 'Your code is 123456' })

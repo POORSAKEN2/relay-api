@@ -132,6 +132,8 @@ sent), and replies and missed calls are not recorded.
 - Staff texts (sign-in codes, job alerts) are never blocked or held.
 - Unprompted texts (booking recovery, reminders, waitlist, review requests) wait until quiet
   hours end: 21:00 to 08:00 Manila time by default (`tenants.quiet_hours_start` and `_end`).
+  A text already waiting is checked again when it is due, so downtime or retries never send
+  one at night. Replies, visit texts, staff texts and emails are never held.
 - Links in texts point at `https://desert.<APP_DOMAIN>/`. A phone can't open `localhost`, so
   for a demo the web app also needs a public address.
 

@@ -14,6 +14,7 @@ missing, and what a US launch would need on top.
 - [x] STOP and START replies write `consent_events` with source `sms_reply`.
   - [x] A STOP blocks homeowner texts already waiting to go out.
 - [x] Quiet hours: unprompted texts wait until `quiet_hours_end` (`send_after`).
+  - [x] Checked again just before sending, so downtime or a retry never sends one at night.
 - [x] Staff texts (sign-in codes, job alerts) skip consent and quiet hours. Sign-in codes are
       sent right away and their body is still never stored.
 - [x] Sign-in codes come from the contractor's own sending number.

@@ -5,11 +5,14 @@ import { sendEmail } from '../../lib/email.ts'
 import { logger } from '../../lib/logger.ts'
 import { sendSms } from './httpsms.ts'
 import * as queries from './messaging.queries.ts'
+import { endOfQuietHours } from './quiet-hours.ts'
+import { TEXT_RULES } from './rules.ts'
 
 // The sender loop: every few seconds, texts and emails that are due go out. sendText() and
 // queueEmail() only save them, inside the caller's transaction, so nothing leaves for a change
 // that was rolled back. Not a pg-boss cron: those run once a minute at most, and a missed-call
-// text-back must leave within 30 seconds.
+// text-back must leave within 30 seconds. Texts whose rule waits for quiet hours are checked
+// again just before sending.
 
 const ROUND_MS = 5_000
 const MESSAGES_PER_ROUND = 20
@@ -69,6 +72,15 @@ async function deliverEmail(email: OutgoingEmail, lastTry: boolean) {
 export async function sendDueMessages() {
   const due = await queries.claimDueMessages(MESSAGES_PER_ROUND)
   for (const message of due) {
+    // Checked again here, not only when the text was saved: one saved at 20:45 must not go
+    // out at 23:00 because the server or the phone was down, or a retry crossed 21:00.
+    if (message.channel === 'sms' && TEXT_RULES[message.kind].quietHours) {
+      const until = await endOfQuietHours(message.tenantId)
+      if (until) {
+        await queries.holdUntil(message.id, until)
+        continue
+      }
+    }
     const lastTry = message.attempts >= MESSAGE_MAX_ATTEMPTS
     if (message.channel === 'email') await deliverEmail(message, lastTry)
     else await deliver(message, lastTry)
