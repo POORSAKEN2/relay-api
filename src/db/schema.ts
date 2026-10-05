@@ -612,6 +612,7 @@ export const JOB_STATUSES = [
 ] as const
 // Feeds the recovered-revenue dashboard and the per-job fee.
 export const JOB_SOURCES = ['web', 'text_back', 'ai', 'recovery_text', 'office'] as const
+export type JobSource = (typeof JOB_SOURCES)[number]
 // Jobs Relay won back for the contractor: a missed-call text, the AI on the phone, or a text
 // to a homeowner who stopped booking. Each one is billed at tenants.per_job_fee_cents.
 export const RECOVERED_JOB_SOURCES = ['text_back', 'ai', 'recovery_text'] as const
