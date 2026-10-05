@@ -45,6 +45,12 @@ export const TEXT_RULES: Record<MessageKind, TextRule> = {
   card_link: VISIT,
 }
 
+// Kinds that go to homeowners: the ones whose rule checks consent. A STOP blocks these,
+// including any already waiting to go out (webhooks.service.ts).
+export const HOMEOWNER_KINDS = (Object.keys(TEXT_RULES) as MessageKind[]).filter(
+  (kind) => TEXT_RULES[kind].consent !== 'none',
+)
+
 const DAY_SECONDS = 24 * 60 * 60
 
 // When quiet hours end, if `now` falls inside them in the contractor's timezone; else null.

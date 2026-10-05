@@ -10,6 +10,7 @@ import {
   tenants,
   webhookEvents,
 } from '../../db/schema.ts'
+import type { MessageKind } from './rules.ts'
 
 // Tenant-scoped queries take tenantId first. The sender's work on a message by id is not
 // tenant-scoped: it serves every contractor.
@@ -179,6 +180,31 @@ export async function insertReplyConsent(
   await tx
     .insert(consentEvents)
     .values({ tenantId, channel: 'sms', source: 'sms_reply', ...values })
+}
+
+// After a STOP: texts to this number that are saved but not yet handed to httpSMS (held
+// for quiet hours, or waiting for a retry) are blocked, as sendText() would block them
+// now. A text already on the phone can't be called back.
+export async function blockWaitingTexts(
+  tenantId: string,
+  contact: string,
+  kinds: MessageKind[],
+  tx: Db,
+) {
+  await tx
+    .update(messages)
+    .set({ status: 'blocked', blockedReason: 'opted_out' })
+    .where(
+      and(
+        eq(messages.tenantId, tenantId),
+        eq(messages.contact, contact),
+        eq(messages.channel, 'sms'),
+        eq(messages.direction, 'outbound'),
+        eq(messages.status, 'queued'),
+        isNull(messages.providerMessageId),
+        inArray(messages.kind, kinds),
+      ),
+    )
 }
 
 export async function insertMissedCall(
