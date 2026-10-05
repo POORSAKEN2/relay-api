@@ -424,3 +424,29 @@ describe('sendWaitlistOffers', () => {
     })
   })
 })
+
+describe('joining again', () => {
+  it('keeps one entry and its place in line, and restarts the 14 days', async () => {
+    const shop = await createWaitlistShop()
+    await join(shop, { name: 'Ann Early', phone: '(480) 555-0101' })
+    await db.update(waitlistEntries).set({ endsAt: new Date(Date.now() + 86_400_000) })
+    const [before] = await entries()
+
+    await join(shop, { name: 'Ann Early', phone: '(480) 555-0101', vulnerableOccupant: true })
+
+    const all = await entries()
+    expect(all).toHaveLength(1)
+    expect(all[0]).toMatchObject({ id: before.id, createdAt: before.createdAt, priority: true })
+    expect(all[0].endsAt.getTime()).toBeGreaterThan(Date.now() + 13 * 86_400_000)
+  })
+
+  it('adds a new entry once the old one is finished', async () => {
+    const shop = await createWaitlistShop()
+    await join(shop, { name: 'Ann Early', phone: '(480) 555-0101' })
+    await db.update(waitlistEntries).set({ status: 'expired' })
+
+    await join(shop, { name: 'Ann Early', phone: '(480) 555-0101' })
+
+    expect((await entries()).map((entry) => entry.status)).toEqual(['expired', 'waiting'])
+  })
+})

@@ -27,6 +27,7 @@ import type {
   DraftInput,
   WaitlistInput,
 } from './online-booking.schemas.ts'
+import * as waitlist from './waitlist.queries.ts'
 
 // The homeowner's side of booking (flow A). Nobody is signed in: the contractor comes from
 // the web address. Steps 1 to 6 end with a booked visit; the homeowner pays at the visit.
@@ -216,16 +217,14 @@ export async function joinWaitlist(tenantId: string, input: WaitlistInput, ip: s
   await db.transaction(async (tx) => {
     await checkServiceAndZip(tenantId, input.serviceId, input.zip, tx)
     const customer = await findOrAddCustomer(tenantId, input, tx)
-    await queries.insertWaitlistEntry(
-      tenantId,
-      {
-        customerId: customer.id,
-        serviceId: input.serviceId,
-        zip: input.zip,
-        priority: input.vulnerableOccupant,
-      },
-      tx,
-    )
+    const values = { zip: input.zip, priority: input.vulnerableOccupant }
+    if (!(await waitlist.renewOpenEntry(tenantId, customer.id, input.serviceId, values, tx))) {
+      await queries.insertWaitlistEntry(
+        tenantId,
+        { customerId: customer.id, serviceId: input.serviceId, ...values },
+        tx,
+      )
+    }
     await booking.insertConsent(
       tenantId,
       {

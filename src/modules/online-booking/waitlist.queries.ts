@@ -218,3 +218,27 @@ export async function setOffer(
     .set({ status: 'offered', offeredAt: new Date(), ...offer })
     .where(and(eq(waitlistEntries.tenantId, tenantId), eq(waitlistEntries.id, entryId)))
 }
+
+// A homeowner joining again for the same service: their open entry gets the new answers and 14
+// more days, and keeps its place in line. False when they have no open entry.
+export async function renewOpenEntry(
+  tenantId: string,
+  customerId: string,
+  serviceId: string,
+  values: { zip: string; priority: boolean },
+  tx: Db,
+) {
+  const renewed = await tx
+    .update(waitlistEntries)
+    .set({ ...values, endsAt: sql`now() + interval '14 days'` })
+    .where(
+      and(
+        eq(waitlistEntries.tenantId, tenantId),
+        eq(waitlistEntries.customerId, customerId),
+        eq(waitlistEntries.serviceId, serviceId),
+        inArray(waitlistEntries.status, OPEN),
+      ),
+    )
+    .returning({ id: waitlistEntries.id })
+  return renewed.length > 0
+}
