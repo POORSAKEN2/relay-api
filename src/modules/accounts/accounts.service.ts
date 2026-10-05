@@ -1,14 +1,8 @@
-import {
-  createHash,
-  createHmac,
-  randomBytes,
-  randomInt,
-  randomUUID,
-  timingSafeEqual,
-} from 'node:crypto'
+import { createHmac, randomInt, randomUUID, timingSafeEqual } from 'node:crypto'
 import { env } from '../../config/env.ts'
 import type { User, UserRole } from '../../db/schema.ts'
 import { HttpError } from '../../lib/http-error.ts'
+import { hashToken, newToken } from '../../lib/tokens.ts'
 import { sendText } from '../messaging/sms.ts'
 import * as queries from './accounts.queries.ts'
 import { hashPassword, verifyPassword } from './passwords.ts'
@@ -45,7 +39,7 @@ export async function signIn(email: string, password: string) {
 }
 
 async function startSession(user: User) {
-  const token = randomBytes(32).toString('base64url')
+  const token = newToken(32)
   const expiresAt = new Date(Date.now() + SESSION_DAYS * DAY_MS)
   await queries.insertSession({ id: hashToken(token), userId: user.id, expiresAt })
   return { token, expiresAt, user: toSessionUser(user) }
@@ -120,7 +114,7 @@ function sameHash(a: string, b: string): boolean {
 // they have no password to fall back on. Only the newest link a user has can be used.
 // Returns the token to put in the emailed link.
 export async function createSignInLink(userId: string): Promise<string> {
-  const token = randomBytes(32).toString('base64url')
+  const token = newToken(32)
   await queries.replaceLink(userId, {
     tokenHash: hashToken(token),
     expiresAt: new Date(Date.now() + LINK_DAYS * DAY_MS),
@@ -164,10 +158,6 @@ export async function signOut(token: string) {
 
 export function cleanupExpiredSessions(): Promise<number> {
   return queries.deleteExpiredSessions(new Date())
-}
-
-function hashToken(token: string): string {
-  return createHash('sha256').update(token).digest('hex')
 }
 
 function toSessionUser(user: User): SessionUser {

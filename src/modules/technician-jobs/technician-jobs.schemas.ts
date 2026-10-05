@@ -47,3 +47,5 @@ export const WorkPhotoStageParams = JobParams.extend({
 
 // The unit's brand and install year, the whole form: a blank box clears that field.
 export const EquipmentInput = PropertyInput.pick({ equipmentBrand: true, equipmentYear: true })
+
+export const LinkParams = z.object({ token: z.string().min(1).max(64) })

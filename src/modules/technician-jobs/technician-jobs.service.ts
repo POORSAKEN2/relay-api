@@ -14,6 +14,7 @@ import {
   formatWindow,
   statusLabel,
 } from '../../lib/labels.ts'
+import { hashToken } from '../../lib/tokens.ts'
 import { emitToTenant } from '../../realtime/index.ts'
 import type { SessionUser } from '../accounts/accounts.service.ts'
 import * as audit from '../audit/audit.queries.ts'
@@ -478,4 +479,12 @@ export async function setEquipment(
     )
   })
   return getMyJob(user, jobId)
+}
+
+// A texted job link: the job id, if the link is the newest one sent to this technician and
+// the job is still open. Every other case gets the same answer.
+export async function openJobLink(user: SessionUser, token: string) {
+  const job = await queries.findJobByLink(tenantOf(user), user.id, hashToken(token))
+  if (!job) throw new HttpError(404, 'link_expired', 'This job link has expired.')
+  return { jobId: job.id }
 }

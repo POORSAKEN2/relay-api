@@ -489,6 +489,10 @@ describe('POST /api/technicians/:technicianId/deactivate', () => {
   it('moves their open jobs from today on to Unassigned and signs them out', async () => {
     const shop = await createShop('desert')
     const booked = await createJob(shop, { technicianId: shop.mike.id })
+    await db
+      .update(jobs)
+      .set({ techLinkHash: 'b'.repeat(64) })
+      .where(eq(jobs.id, booked.id))
     const noAccess = await createJob(shop, {
       technicianId: shop.mike.id,
       status: 'no_access',
@@ -516,6 +520,8 @@ describe('POST /api/technicians/:technicianId/deactivate', () => {
     const technicianOf = async (jobId: string) =>
       (await db.select().from(jobs).where(eq(jobs.id, jobId)))[0].technicianId
     expect(await technicianOf(booked.id)).toBeNull()
+    const [bookedJob] = await db.select().from(jobs).where(eq(jobs.id, booked.id))
+    expect(bookedJob.techLinkHash).toBeNull()
     expect(await technicianOf(noAccess.id)).toBeNull()
     expect(await technicianOf(enRoute.id)).toBe(shop.mike.id) // already on the way: left alone
     expect(await technicianOf(past.id)).toBe(shop.mike.id) // history keeps the name

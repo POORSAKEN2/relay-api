@@ -169,3 +169,20 @@ export async function listApprovedRepairs(tenantId: string, jobIds: string[]) {
     )
     .orderBy(asc(jobItems.createdAt), asc(jobItems.id))
 }
+
+// The job a texted link points to, if it is still this technician's and still open. Done
+// and cancelled jobs have no hash anymore, so they never match.
+export async function findJobByLink(tenantId: string, technicianId: string, linkHash: string) {
+  const [job] = await db
+    .select({ id: jobs.id })
+    .from(jobs)
+    .where(
+      and(
+        eq(jobs.tenantId, tenantId),
+        eq(jobs.technicianId, technicianId),
+        eq(jobs.techLinkHash, linkHash),
+        inArray(jobs.status, [...VISIBLE_STATUSES]),
+      ),
+    )
+  return job
+}

@@ -31,6 +31,16 @@ missing, and what a US launch would need on top.
 - [x] Office alerts: `new_booking_alert` and `priority_alert` to owner and office users with a
       phone.
 
+## Done (2026-10-05, technician job texts)
+
+- [x] Technicians get a text (`job_assigned`) when a job is assigned, moved, reassigned, or removed.
+      Texts use plain hyphens (GSM-7 friendly) and skip quiet hours and consent checks.
+- [x] Texts for `assigned` and `changed` carry an expiring job-page link (`/j/<token>`).
+      The link is validated via `jobs.tech_link_hash` (sha256). Valid links forward to `/jobs/:jobId`;
+      reassigning, moving, cancelling, or deactivating invalidates the hash so older links
+      show a clean expired page.
+- [x] Removed texts tell the technician the job was taken off their list without any link.
+
 ## Homeowner messages: still open
 
 - [ ] A 2-hour reminder for a visit that starts before quiet hours end (an 8 AM window) waits

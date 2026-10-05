@@ -15,7 +15,6 @@ import {
   WEDNESDAY,
 } from '../../../test/helpers.ts'
 import { createApp } from '../../app.ts'
-import { env } from '../../config/env.ts'
 import { db } from '../../db/client.ts'
 import {
   auditEvents,
@@ -26,7 +25,9 @@ import {
   messages,
   users,
 } from '../../db/schema.ts'
+import { hashToken } from '../../lib/tokens.ts'
 import { emitToTenant } from '../../realtime/index.ts'
+import * as queries from './dispatch.queries.ts'
 
 vi.mock('../../realtime/index.ts', () => ({ emitToTenant: vi.fn() }))
 
@@ -317,28 +318,110 @@ describe('PUT /api/jobs/:jobId/slot', () => {
     const job = await createJob(shop)
     const put = (body: object) =>
       request(app).put(`/api/jobs/${job.id}/slot`).set('Cookie', shop.cookie).send(body).expect(200)
+    const getJobRow = async () => (await db.select().from(jobs).where(eq(jobs.id, job.id)))[0]
     const texts = () => db.select().from(messages).orderBy(asc(messages.createdAt))
 
-    await put({ date: TUESDAY, windowId: shop.tueMorning.id, technicianId: shop.mike.id })
-    await put({ date: TUESDAY, windowId: shop.tueAfternoon.id, technicianId: shop.mike.id })
-    // Nothing changed: no text.
-    await put({ date: TUESDAY, windowId: shop.tueAfternoon.id, technicianId: shop.mike.id })
-    await put({ date: TUESDAY, windowId: shop.tueAfternoon.id, technicianId: shop.ana.id })
-    // Unassigning texts nobody.
-    await put({ date: TUESDAY, windowId: shop.tueAfternoon.id, technicianId: null })
+    // The token at the end of a text's link.
+    const tokenIn = (body: string) => body.match(/\/j\/([\w-]+)$/)![1]
 
-    const sent = await texts()
-    const link = `https://desert.${env.APP_DOMAIN}/jobs/${job.id}`
-    expect(sent.map((text) => [text.contact, text.kind, text.toUserId, text.jobId])).toEqual([
-      [shop.mike.phone, 'job_assigned', shop.mike.id, job.id],
-      [shop.mike.phone, 'job_assigned', shop.mike.id, job.id],
-      [shop.ana.phone, 'job_assigned', shop.ana.id, job.id],
-    ])
-    expect(sent[0].body).toContain('New job')
-    expect(sent[0].body).toContain(link)
-    expect(sent[1].body).toContain('Job changed')
-    expect(sent[1].body).toContain('12 PM-4 PM')
-    expect(sent[2].body).toContain('New job')
+    // 1. Assign Mike
+    await put({ date: TUESDAY, windowId: shop.tueMorning.id, technicianId: shop.mike.id })
+    const afterAssign = await texts()
+    expect(afterAssign).toHaveLength(1)
+    expect(afterAssign[0]).toMatchObject({
+      contact: shop.mike.phone,
+      kind: 'job_assigned',
+      toUserId: shop.mike.id,
+      jobId: job.id,
+    })
+    expect(afterAssign[0].body).toContain('New job')
+    const token1 = tokenIn(afterAssign[0].body)
+    const hash1 = (await getJobRow()).techLinkHash
+    expect(hash1).toBe(hashToken(token1))
+
+    // 2. Move to afternoon
+    await put({ date: TUESDAY, windowId: shop.tueAfternoon.id, technicianId: shop.mike.id })
+    const afterMove = await texts()
+    expect(afterMove).toHaveLength(2)
+    expect(afterMove[1]).toMatchObject({
+      contact: shop.mike.phone,
+      kind: 'job_assigned',
+      toUserId: shop.mike.id,
+      jobId: job.id,
+    })
+    expect(afterMove[1].body).toContain('Job changed')
+    expect(afterMove[1].body).toContain('12 PM-4 PM')
+    const token2 = tokenIn(afterMove[1].body)
+    const hash2 = (await getJobRow()).techLinkHash
+    expect(hash2).toBe(hashToken(token2))
+    expect(hash2).not.toBe(hash1)
+
+    // 3. Save the same again: no text, hash untouched
+    await put({ date: TUESDAY, windowId: shop.tueAfternoon.id, technicianId: shop.mike.id })
+    const afterNoop = await texts()
+    expect(afterNoop).toHaveLength(2)
+    expect((await getJobRow()).techLinkHash).toBe(hash2)
+
+    // 4. Reassign to Ana: Mike taken off with old time, Ana assigned with link
+    await put({ date: TUESDAY, windowId: shop.tueAfternoon.id, technicianId: shop.ana.id })
+    const afterReassign = await texts()
+    expect(afterReassign).toHaveLength(4)
+    const reassignTexts = afterReassign.slice(2)
+    expect(new Set(reassignTexts.map((t) => `${t.contact}:${t.toUserId}`))).toEqual(
+      new Set([`${shop.mike.phone}:${shop.mike.id}`, `${shop.ana.phone}:${shop.ana.id}`]),
+    )
+    const mikeRemoved = reassignTexts.find((t) => t.toUserId === shop.mike.id)!
+    const anaAssigned = reassignTexts.find((t) => t.toUserId === shop.ana.id)!
+    expect(mikeRemoved.body).toContain('Job taken off your list')
+    expect(mikeRemoved.body).toContain('12 PM-4 PM')
+    expect(mikeRemoved.body).not.toContain('/j/')
+    expect(anaAssigned.body).toContain('New job')
+    const token3 = tokenIn(anaAssigned.body)
+    const hash3 = (await getJobRow()).techLinkHash
+    expect(hash3).toBe(hashToken(token3))
+    expect(hash3).not.toBe(hash2)
+
+    // 5. Unassign: Ana taken off, hash is null
+    await put({ date: TUESDAY, windowId: shop.tueAfternoon.id, technicianId: null })
+    const afterUnassign = await texts()
+    expect(afterUnassign).toHaveLength(5)
+    const anaRemoved = afterUnassign[4]
+    expect(anaRemoved).toMatchObject({
+      contact: shop.ana.phone,
+      kind: 'job_assigned',
+      toUserId: shop.ana.id,
+      jobId: job.id,
+    })
+    expect(anaRemoved.body).toContain('Job taken off your list')
+    expect(anaRemoved.body).not.toContain('/j/')
+    expect((await getJobRow()).techLinkHash).toBeNull()
+  })
+
+  it('assigning a technician with no phone saves the job and a hash, and writes no messages row', async () => {
+    const shop = await createShop('desert')
+    const job = await createJob(shop)
+
+    // A technician whose phone number is missing gets no text; the change and hash stand.
+    vi.spyOn(queries, 'findAssignmentText').mockImplementationOnce(
+      async (tenantId, jobId, technicianId, tx) => {
+        const real = await queries.findAssignmentText(tenantId, jobId, technicianId, tx)
+        return real ? { ...real, technicianPhone: null } : real
+      },
+    )
+
+    await request(app)
+      .put(`/api/jobs/${job.id}/slot`)
+      .set('Cookie', shop.cookie)
+      .send({ date: TUESDAY, windowId: shop.tueMorning.id, technicianId: shop.mike.id })
+      .expect(200)
+
+    const [saved] = await db.select().from(jobs).where(eq(jobs.id, job.id))
+    expect(saved.technicianId).toBe(shop.mike.id)
+    expect(saved.techLinkHash).toEqual(expect.any(String))
+    expect(saved.techLinkHash).toHaveLength(64)
+
+    const sent = await db.select().from(messages).where(eq(messages.jobId, job.id))
+    expect(sent).toHaveLength(0)
   })
 
   it('moves a job to another day and unassigns it, refreshing both days', async () => {
