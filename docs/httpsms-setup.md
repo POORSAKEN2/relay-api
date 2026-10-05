@@ -118,8 +118,9 @@ sent), and replies and missed calls are not recorded.
    SMS.
 2. **A homeowner text.** Book a job for your own number with the texts box ticked, assign it,
    and tap **On my way** as the technician.
-3. **STOP.** Reply `STOP` from your phone. Later homeowner texts to you are saved as `blocked`
-   with reason `opted_out`. Reply `START` to undo it.
+3. **STOP.** Reply `STOP` (or `Stop.`) from your phone. Later homeowner texts to you are saved as
+   `blocked` with reason `opted_out`, and texts already waiting (quiet hours, retries) are
+   blocked too; texts already on the phone still go. Reply `START` to undo it.
 4. **Missed call.** Call the demo phone and don't answer: a row appears in `calls`.
 
 ## Rules Relay applies

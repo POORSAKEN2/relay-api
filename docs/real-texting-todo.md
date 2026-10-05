@@ -12,6 +12,7 @@ missing, and what a US launch would need on top.
 - [x] Compliance gate: `blocked` with `no_consent` or `opted_out` (`src/modules/messaging/rules.ts`).
 - [x] Delivery-status webhook, with repeats ignored through `webhook_events`.
 - [x] STOP and START replies write `consent_events` with source `sms_reply`.
+  - [x] A STOP blocks homeowner texts already waiting to go out.
 - [x] Quiet hours: unprompted texts wait until `quiet_hours_end` (`send_after`).
 - [x] Staff texts (sign-in codes, job alerts) skip consent and quiet hours. Sign-in codes are
       sent right away and their body is still never stored.
