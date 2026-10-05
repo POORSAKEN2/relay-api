@@ -28,6 +28,8 @@ missing, and what a US launch would need on top.
 - [x] Emails go through the same outbox as texts: a `messages` row with channel `email`,
       saved in the change's transaction and sent by the sender loop with the same retries.
       Emails skip consent and quiet hours.
+- [x] Office alerts: `new_booking_alert` and `priority_alert` to owner and office users with a
+      phone.
 
 ## Homeowner messages: still open
 
@@ -66,6 +68,7 @@ missing, and what a US launch would need on top.
 - [ ] Recovery wait (60 minutes) and cutoff (24 hours) as contractor settings, not constants.
 - [ ] A second reminder text, if the first one gets a good response.
 - [ ] A per-contractor switch to turn recovery texts off.
+- [ ] Office alerts by email too (module 10).
 
 ## US launch
 
