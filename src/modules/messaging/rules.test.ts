@@ -30,6 +30,10 @@ it('never checks consent or quiet hours for staff texts', () => {
   }
 })
 
+it('holds routine office alerts for quiet hours with no consent check', () => {
+  expect(TEXT_RULES.new_booking_alert).toEqual({ consent: 'none', quietHours: true })
+})
+
 it('holds only texts the homeowner didn’t just ask for', () => {
   expect(TEXT_RULES.abandoned_booking.quietHours).toBe(true)
   expect(TEXT_RULES.reminder.quietHours).toBe(true)

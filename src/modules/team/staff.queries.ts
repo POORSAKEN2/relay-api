@@ -15,6 +15,7 @@ function selectStaff(tx: Db) {
       id: users.id,
       name: users.name,
       email: users.email,
+      phone: users.phone,
       role: users.role,
       disabledAt: users.disabledAt,
       invited: sql<boolean>`(${users.passwordHash} is null and not exists (${tx
@@ -37,7 +38,7 @@ export async function findStaff(tenantId: string, staffId: string, tx: Db = db) 
   return person
 }
 
-type StaffValues = { name: string; email: string; role: 'owner' | 'office' }
+type StaffValues = { name: string; email: string; phone: string | null; role: 'owner' | 'office' }
 
 export async function insertStaff(tenantId: string, values: StaffValues) {
   const [person] = await db

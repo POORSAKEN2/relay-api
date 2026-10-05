@@ -27,6 +27,13 @@ function toE164(value: string): string | null {
   return /^[2-9]\d{9}$/.test(national) ? `+1${national}` : null
 }
 
+// An optional mobile number. Empty means "none", stored as null so an edit can clear it.
+export const OptionalPhone = z.preprocess(
+  (value) =>
+    value === undefined || (typeof value === 'string' && value.trim() === '') ? null : value,
+  Phone.nullable(),
+)
+
 export const Email = z.email('Enter a valid email address').trim().toLowerCase()
 
 // A blank field means "no email".

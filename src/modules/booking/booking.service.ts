@@ -7,6 +7,7 @@ import * as audit from '../audit/audit.queries.ts'
 import * as charges from '../charges/charges.service.ts'
 import * as customers from '../customers/customers.queries.ts'
 import { sendBookingConfirmation } from '../homeowner-messages/homeowner-messages.service.ts'
+import { sendOfficeAlert } from '../office-alerts/office-alerts.service.ts'
 import * as queries from './booking.queries.ts'
 import type { OfficeBookingInput } from './booking.schemas.ts'
 
@@ -173,8 +174,9 @@ export function announceBooking(
   if (job.priority) emitToTenant(tenantId, 'booking.priority', change)
 }
 
-// Books a job and writes its booked lines (the service, and priority service when chosen) in
-// the same transaction. Every way of booking goes through here, so no job is without them.
+// Books a job, writes its booked lines (the service, and priority service when chosen), and
+// texts the contractor's office staff, all in the booking's transaction. Every way of booking
+// goes through here, so no job is without its lines or its alert.
 export async function insertBookedJob(
   tenantId: string,
   values: Parameters<typeof queries.insertJob>[1],
@@ -182,6 +184,7 @@ export async function insertBookedJob(
 ) {
   const job = await queries.insertJob(tenantId, values, tx)
   await charges.addBookedLines(tenantId, job.id, tx)
+  await sendOfficeAlert(tenantId, job.id, tx)
   return job
 }
 
