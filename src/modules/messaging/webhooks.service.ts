@@ -3,6 +3,7 @@ import { db, type Tx } from '../../db/client.ts'
 import { Phone } from '../../lib/fields.ts'
 import { logger } from '../../lib/logger.ts'
 import * as queries from './messaging.queries.ts'
+import { HOMEOWNER_KINDS } from './rules.ts'
 
 // What httpSMS posts to /api/webhooks/httpsms: a CloudEvent. Field names differ between events
 // (a text's id is `id` in some and `message_id` in others), so every data field is optional.
@@ -25,7 +26,8 @@ export const HttpSmsEvent = z.object({
 })
 export type HttpSmsEvent = z.infer<typeof HttpSmsEvent>
 
-// Replies that opt out of texts, or back in. Carriers use the same words.
+// Replies that opt out of texts, or back in. Carriers use the same words. A START from someone
+// who never ticked the consent box counts as consent; they asked for texts.
 const STOP_WORDS = ['STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT']
 const START_WORDS = ['START', 'UNSTOP']
 
@@ -103,13 +105,16 @@ async function receiveText(event: HttpSmsEvent, tx: Tx) {
     tx,
   )
 
-  const word = body.trim().toUpperCase()
+  // The whole reply is the command. Trailing dots and bangs are dropped ("Stop.") because no
+  // carrier catches STOP on an httpSMS phone: Relay is the only thing honoring it.
+  const word = body
+    .trim()
+    .replace(/[.!]+$/, '')
+    .toUpperCase()
   if (STOP_WORDS.includes(word) || START_WORDS.includes(word)) {
-    await queries.insertReplyConsent(
-      tenantId,
-      { contact, granted: START_WORDS.includes(word), messageId: message.id },
-      tx,
-    )
+    const granted = START_WORDS.includes(word)
+    await queries.insertReplyConsent(tenantId, { contact, granted, messageId: message.id }, tx)
+    if (!granted) await queries.blockWaitingTexts(tenantId, contact, HOMEOWNER_KINDS, tx)
   }
 }
 
