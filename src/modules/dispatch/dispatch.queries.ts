@@ -129,6 +129,7 @@ export async function findJobDetail(tenantId: string, jobId: string) {
       status: jobs.status,
       priority: jobs.priority,
       source: jobs.source,
+      bookedVia: jobs.bookedVia,
       problem: jobs.problem,
       systemType: jobs.systemType,
       vulnerableOccupant: jobs.vulnerableOccupant,

@@ -263,6 +263,11 @@ export async function bookVisit(tenant: Tenant, input: BookingInput, ip: string 
       undefined,
       offerId,
     )
+    // The draft this booking finishes. An unknown token is ignored: a draft must never stop a
+    // booking.
+    const draft = input.draftToken
+      ? await queries.findOpenDraft(tenant.id, input.draftToken, tx)
+      : undefined
 
     const customer = await findOrAddCustomer(tenant.id, input, tx)
     const property =
@@ -289,6 +294,8 @@ export async function bookVisit(tenant: Tenant, input: BookingInput, ip: string 
         status: 'booked',
         bookedAt: new Date(),
         source: 'web',
+        // A link's ?from= wins; a booking finished from a draft keeps where the draft began.
+        bookedVia: input.bookedVia ?? draft?.answers.bookedVia ?? null,
         priority: input.vulnerableOccupant || priorityFeeCents > 0,
         priorityFeeCents,
         problem: input.problem,
@@ -335,11 +342,7 @@ export async function bookVisit(tenant: Tenant, input: BookingInput, ip: string 
         tx,
       )
     }
-    // The booking this draft was for is made. An unknown token is ignored: a draft must never
-    // stop a booking.
-    const draft = input.draftToken
-      ? await queries.findOpenDraft(tenant.id, input.draftToken, tx)
-      : undefined
+    // The booking this draft was for is made.
     if (draft) await queries.markDraftBooked(tenant.id, draft.id, job.id, tx)
     if (offerId) await waitlist.markOfferBooked(tenant.id, offerId, tx)
 

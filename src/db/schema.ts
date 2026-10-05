@@ -583,6 +583,10 @@ export const JOB_STATUSES = [
 ] as const
 // Feeds the recovered-revenue dashboard and the per-job fee.
 export const JOB_SOURCES = ['web', 'text_back', 'ai', 'recovery_text', 'office'] as const
+
+// Where the homeowner found the booking page, when it is known: the link on the contractor's
+// Google Business Profile, or the button on their own website (widget.js).
+export const BOOKED_VIA = ['google', 'widget'] as const
 export const SYSTEM_TYPES = [
   'central_ac',
   'heat_pump',
@@ -605,6 +609,7 @@ export const jobs = pgTable(
     callId: uuid('call_id'), // the call it came from (AI, office or text-back)
     status: text('status', { enum: JOB_STATUSES }).notNull().default('held'),
     source: text('source', { enum: JOB_SOURCES }).notNull(),
+    bookedVia: text('booked_via', { enum: BOOKED_VIA }), // null = the plain link, or not known
     priority: boolean('priority').notNull().default(false),
     // The contractor's priority fee when the homeowner chose priority service, copied at the
     // time so a later fee change doesn't rewrite it. 0 = not chosen.
@@ -656,6 +661,7 @@ export const jobs = pgTable(
     }),
     check('jobs_status_valid', oneOf(t.status, JOB_STATUSES)),
     check('jobs_source_valid', oneOf(t.source, JOB_SOURCES)),
+    check('jobs_booked_via_valid', oneOf(t.bookedVia, BOOKED_VIA)),
     check('jobs_system_type_valid', oneOf(t.systemType, SYSTEM_TYPES)),
     check('jobs_window_order', sql`${t.windowEndsAt} > ${t.windowStartsAt}`),
     check('jobs_priority_fee_not_negative', sql`${t.priorityFeeCents} >= 0`),
@@ -889,6 +895,7 @@ export type DraftAnswers = {
   systemType?: (typeof SYSTEM_TYPES)[number]
   vulnerableOccupant?: boolean
   priorityService?: boolean
+  bookedVia?: (typeof BOOKED_VIA)[number]
 }
 
 // An online booking somebody started and hasn't finished. Saved once they give a name and

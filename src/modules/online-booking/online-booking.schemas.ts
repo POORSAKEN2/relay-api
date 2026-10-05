@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { SYSTEM_TYPES } from '../../db/schema.ts'
+import { BOOKED_VIA, SYSTEM_TYPES } from '../../db/schema.ts'
 import { LocalDate, OptionalEmail, Phone, UsState, Zip } from '../../lib/fields.ts'
 
 // What a homeowner sends from the booking page. Messages are shown next to the field as-is.
@@ -36,6 +36,7 @@ export const DraftAnswersInput = z.object({
     systemType: z.enum(SYSTEM_TYPES).optional(),
     vulnerableOccupant: z.boolean().optional(),
     priorityService: z.boolean().optional(),
+    bookedVia: z.enum(BOOKED_VIA).optional(),
   }),
 })
 
@@ -70,6 +71,7 @@ export const BookingInput = z.object({
   consent: z.boolean().default(false),
   draftToken: z.string().optional(), // the draft this booking finishes, when there is one
   offerToken: z.string().max(64).optional(), // the waitlist offer this booking takes
+  bookedVia: z.enum(BOOKED_VIA).optional(), // where the homeowner found the booking page
 })
 export type BookingInput = z.infer<typeof BookingInput>
 

@@ -176,6 +176,24 @@ describe('GET /api/online-booking/windows', () => {
 })
 
 describe('POST /api/online-booking/bookings', () => {
+  it('remembers where the homeowner found the booking page', async () => {
+    const shop = await createServingShop()
+    await post('bookings', bookingBody(shop, { bookedVia: 'google' })).expect(201)
+    await post('bookings', bookingBody(shop, { bookedVia: 'widget' })).expect(201)
+    await post('bookings', bookingBody(shop, { windowId: shop.tueAfternoon.id })).expect(201)
+
+    const booked = await db.select({ bookedVia: jobs.bookedVia }).from(jobs)
+    expect(new Set(booked.map((job) => job.bookedVia))).toEqual(new Set(['google', 'widget', null]))
+  })
+
+  it('refuses a bookedVia it doesn’t know', async () => {
+    const shop = await createServingShop()
+
+    const res = await post('bookings', bookingBody(shop, { bookedVia: 'facebook' })).expect(400)
+    expect(res.body.error.code).toBe('validation_failed')
+    expect(await db.select().from(jobs)).toEqual([])
+  })
+
   it('books the window and saves the homeowner, their address and their consent', async () => {
     const shop = await createServingShop()
 
