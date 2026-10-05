@@ -1,7 +1,8 @@
-import { db } from '../../db/client.ts'
-import { WAITLIST_OFFER_MINUTES } from '../../db/schema.ts'
-import { formatDay, textWindow } from '../../lib/labels.ts'
-import { newLinkToken } from '../../lib/link-token.ts'
+import { type Db, db } from '../../db/client.ts'
+import { type Tenant, WAITLIST_OFFER_MINUTES } from '../../db/schema.ts'
+import { HttpError } from '../../lib/http-error.ts'
+import { formatClock, formatDay, formatPhone, formatWindow, textWindow } from '../../lib/labels.ts'
+import { hashLinkToken, newLinkToken } from '../../lib/link-token.ts'
 import { tenantUrl } from '../../lib/tenant-url.ts'
 import * as booking from '../booking/booking.queries.ts'
 import { quietUntil } from '../messaging/rules.ts'
@@ -112,4 +113,36 @@ function offerPlace(tenant: OfferingTenant, place: Place) {
     )
     return 'offered'
   })
+}
+
+const offerEnded = (tenant: Tenant) =>
+  new HttpError(
+    404,
+    'not_found',
+    `This offer has ended. Pick another time, or call ${formatPhone(tenant.contactPhone)}.`,
+  )
+
+// The offer link: what the booking page fills in, and until when the place is held.
+export async function getOffer(tenant: Tenant, token: string) {
+  const offer = await queries.findOpenOffer(tenant.id, hashLinkToken(token))
+  if (!offer) throw offerEnded(tenant)
+  return {
+    serviceId: offer.serviceId,
+    zip: offer.zip,
+    name: offer.name,
+    phone: offer.phone ?? '',
+    vulnerableOccupant: offer.priority,
+    date: offer.date!,
+    windowId: offer.windowId!,
+    dayLabel: formatDay(offer.date!),
+    windowLabel: formatWindow(offer.startsAt, offer.endsAt),
+    heldUntilLabel: formatClock(offer.expiresAt!, tenant.timezone),
+  }
+}
+
+// The open offer a token names, if any. An ended or unknown token is ignored: it must never
+// stop a booking or the calendar.
+export async function findOpenOfferId(tenantId: string, token: string | undefined, tx: Db = db) {
+  if (!token) return undefined
+  return (await queries.findOpenOffer(tenantId, hashLinkToken(token), tx))?.id
 }

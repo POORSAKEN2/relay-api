@@ -450,3 +450,102 @@ describe('joining again', () => {
     expect((await entries()).map((entry) => entry.status)).toEqual(['expired', 'waiting'])
   })
 })
+
+// Ann on the waitlist with an open offer for `soon` (`later` is taken). Returns her link token.
+async function offerToAnn(shop: WaitlistShop) {
+  await join(shop, { name: 'Ann Early', phone: '(480) 555-0101' })
+  await fillPlace(shop, shop.later)
+  await sendWaitlistOffers()
+  const [text] = await offerTexts()
+  return tokenIn(text.body)
+}
+
+const ANN = { name: 'Ann Early', phone: '(480) 555-0101' }
+
+describe('GET /api/online-booking/offers/:token', () => {
+  it('shows the offer on its own link', async () => {
+    const shop = await createWaitlistShop()
+    const token = await offerToAnn(shop)
+
+    const res = await get(`offers/${token}`).expect(200)
+    expect(res.body).toEqual({
+      serviceId: shop.service.id,
+      zip: '85201',
+      name: 'Ann Early',
+      phone: '+14805550101',
+      vulnerableOccupant: false,
+      date: shop.soon,
+      windowId: shop.window.id,
+      dayLabel: expect.stringMatching(/^\w{3}, \w{3} \d{1,2}$/),
+      windowLabel: '8 AM–12 PM',
+      heldUntilLabel: expect.stringMatching(/^\d{1,2}(:\d{2})? (AM|PM)$/),
+    })
+  })
+
+  it('says the offer ended once it ran out', async () => {
+    const shop = await createWaitlistShop()
+    const token = await offerToAnn(shop)
+    await runOut()
+
+    const res = await get(`offers/${token}`).expect(404)
+    expect(res.body.error.message).toBe(
+      'This offer has ended. Pick another time, or call (480) 555-0100.',
+    )
+  })
+
+  it('works only on its own contractor’s address', async () => {
+    const shop = await createWaitlistShop()
+    const token = await offerToAnn(shop)
+    await createShop('other')
+
+    await get(`offers/${token}`, 'other').expect(404)
+  })
+
+  it('says the offer ended when the office deleted its window', async () => {
+    const shop = await createWaitlistShop()
+    const token = await offerToAnn(shop)
+    await db.delete(arrivalWindows).where(eq(arrivalWindows.id, shop.window.id))
+
+    await get(`offers/${token}`).expect(404)
+  })
+})
+
+describe('booking from an offer', () => {
+  it('lets the holder book the held place, and closes their entry', async () => {
+    const shop = await createWaitlistShop()
+    const token = await offerToAnn(shop)
+
+    await post('bookings', bookingBody(shop, { ...ANN, offerToken: token })).expect(201)
+
+    const [ann] = await entries()
+    expect(ann).toMatchObject({ status: 'booked', offerLinkHash: null })
+    await get(`offers/${token}`).expect(404)
+  })
+
+  it('shows the held place on the holder’s calendar only', async () => {
+    const shop = await createWaitlistShop()
+    const token = await offerToAnn(shop)
+    const dates = (res: request.Response) => res.body.days.map((day: { date: string }) => day.date)
+
+    expect(dates(await get(`windows?offer=${token}`).expect(200))).toEqual([shop.soon])
+    expect(dates(await get('windows').expect(200))).toEqual([])
+  })
+
+  it('books with an ended offer when the place is still free', async () => {
+    const shop = await createWaitlistShop()
+    const token = await offerToAnn(shop)
+    await runOut()
+
+    await post('bookings', bookingBody(shop, { ...ANN, offerToken: token })).expect(201)
+  })
+
+  it('ignores a made-up offer token: the place stays held', async () => {
+    const shop = await createWaitlistShop()
+    await offerToAnn(shop)
+
+    const res = await post('bookings', bookingBody(shop, { offerToken: 'made-up-token' })).expect(
+      409,
+    )
+    expect(res.body.error.code).toBe('window_full')
+  })
+})

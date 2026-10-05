@@ -69,6 +69,7 @@ export const BookingInput = z.object({
   zip: Zip,
   consent: z.boolean().default(false),
   draftToken: z.string().optional(), // the draft this booking finishes, when there is one
+  offerToken: z.string().max(64).optional(), // the waitlist offer this booking takes
 })
 export type BookingInput = z.infer<typeof BookingInput>
 

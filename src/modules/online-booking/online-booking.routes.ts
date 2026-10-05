@@ -15,6 +15,7 @@ import {
   ZipParams,
 } from './online-booking.schemas.ts'
 import * as onlineBooking from './online-booking.service.ts'
+import * as waitlistOffers from './waitlist.service.ts'
 
 // The public booking page. No sign-in: the contractor comes from the web address.
 export const onlineBookingRoutes = Router()
@@ -50,7 +51,8 @@ onlineBookingRoutes.get('/online-booking/service-area/:zip', tenantFromHost, asy
 })
 
 onlineBookingRoutes.get('/online-booking/windows', tenantFromHost, async (req, res) => {
-  res.json(await onlineBooking.listOpenWindows(req.tenant!.id))
+  const offer = typeof req.query.offer === 'string' ? req.query.offer : undefined
+  res.json(await onlineBooking.listOpenWindows(req.tenant!.id, offer))
 })
 
 onlineBookingRoutes.post(
@@ -154,6 +156,16 @@ onlineBookingRoutes.post(
   async (req, res) => {
     const input = BookingInput.parse(req.body)
     res.status(201).json(await onlineBooking.bookVisit(req.tenant!, input, req.ip ?? null))
+  },
+)
+
+// The link in a waitlist offer text: the place held for this homeowner.
+onlineBookingRoutes.get(
+  '/online-booking/offers/:token',
+  formLimit,
+  tenantFromHost,
+  async (req, res) => {
+    res.json(await waitlistOffers.getOffer(req.tenant!, String(req.params.token)))
   },
 )
 

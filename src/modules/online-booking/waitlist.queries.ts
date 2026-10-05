@@ -1,6 +1,7 @@
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, ne, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lte, ne, or, sql } from 'drizzle-orm'
 import { type Db, db, type Tx } from '../../db/client.ts'
 import {
+  arrivalWindows,
   consentEvents,
   customers,
   jobs,
@@ -241,4 +242,55 @@ export async function renewOpenEntry(
     )
     .returning({ id: waitlistEntries.id })
   return renewed.length > 0
+}
+
+// An open offer by its link's hash, with what the booking page fills in. Nothing once it ran
+// out, was used, or its window was deleted.
+export async function findOpenOffer(tenantId: string, linkHash: string, tx: Db = db) {
+  const [offer] = await tx
+    .select({
+      id: waitlistEntries.id,
+      serviceId: waitlistEntries.serviceId,
+      zip: waitlistEntries.zip,
+      priority: waitlistEntries.priority,
+      date: waitlistEntries.offerDate,
+      windowId: waitlistEntries.offerWindowId,
+      expiresAt: waitlistEntries.offerExpiresAt,
+      name: customers.name,
+      phone: customers.phone,
+      startsAt: arrivalWindows.startsAt,
+      endsAt: arrivalWindows.endsAt,
+    })
+    .from(waitlistEntries)
+    .innerJoin(customers, eq(customers.id, waitlistEntries.customerId))
+    .innerJoin(
+      arrivalWindows,
+      and(
+        eq(arrivalWindows.tenantId, waitlistEntries.tenantId),
+        eq(arrivalWindows.id, waitlistEntries.offerWindowId),
+      ),
+    )
+    .where(
+      and(
+        eq(waitlistEntries.tenantId, tenantId),
+        eq(waitlistEntries.offerLinkHash, linkHash),
+        eq(waitlistEntries.status, 'offered'),
+        gt(waitlistEntries.offerExpiresAt, sql`now()`),
+      ),
+    )
+  return offer
+}
+
+// The homeowner booked from their offer.
+export async function markOfferBooked(tenantId: string, entryId: string, tx: Db) {
+  await tx
+    .update(waitlistEntries)
+    .set({ status: 'booked', ...NO_OFFER })
+    .where(
+      and(
+        eq(waitlistEntries.tenantId, tenantId),
+        eq(waitlistEntries.id, entryId),
+        eq(waitlistEntries.status, 'offered'),
+      ),
+    )
 }

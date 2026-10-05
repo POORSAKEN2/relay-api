@@ -28,6 +28,7 @@ import type {
   WaitlistInput,
 } from './online-booking.schemas.ts'
 import * as waitlist from './waitlist.queries.ts'
+import * as waitlistOffers from './waitlist.service.ts'
 
 // The homeowner's side of booking (flow A). Nobody is signed in: the contractor comes from
 // the web address. Steps 1 to 6 end with a booked visit; the homeowner pays at the visit.
@@ -69,9 +70,11 @@ export async function checkZip(tenantId: string, zip: string) {
   return { zip, served: await zipIsServed(tenantId, zip) }
 }
 
-// Step 5: open arrival windows for the next two weeks, grouped by day.
-export async function listOpenWindows(tenantId: string) {
-  const rows = await queries.listOpenWindows(tenantId, DAYS_AHEAD)
+// Step 5: open arrival windows for the next two weeks, grouped by day. With a waitlist offer's
+// token, the place held for that homeowner shows as open.
+export async function listOpenWindows(tenantId: string, offerToken?: string) {
+  const offerId = await waitlistOffers.findOpenOfferId(tenantId, offerToken)
+  const rows = await queries.listOpenWindows(tenantId, DAYS_AHEAD, offerId)
   const days: { date: string; label: string; windows: { id: string; label: string }[] }[] = []
   for (const row of rows) {
     // Rows come sorted by day, so a new date always starts a new group.
@@ -250,7 +253,16 @@ export async function bookVisit(tenant: Tenant, input: BookingInput, ip: string 
 
   const job = await db.transaction(async (tx) => {
     const service = await checkServiceAndZip(tenant.id, input.serviceId, input.zip, tx)
-    const slot = await reserveOpenWindow(tx, tenant.id, input.windowId, input.date)
+    // A place held for this homeowner from the waitlist doesn't count against them.
+    const offerId = await waitlistOffers.findOpenOfferId(tenant.id, input.offerToken, tx)
+    const slot = await reserveOpenWindow(
+      tx,
+      tenant.id,
+      input.windowId,
+      input.date,
+      undefined,
+      offerId,
+    )
 
     const customer = await findOrAddCustomer(tenant.id, input, tx)
     const property =
@@ -329,6 +341,7 @@ export async function bookVisit(tenant: Tenant, input: BookingInput, ip: string 
       ? await queries.findOpenDraft(tenant.id, input.draftToken, tx)
       : undefined
     if (draft) await queries.markDraftBooked(tenant.id, draft.id, job.id, tx)
+    if (offerId) await waitlist.markOfferBooked(tenant.id, offerId, tx)
 
     await audit.insertHomeownerAction(
       tenant.id,
