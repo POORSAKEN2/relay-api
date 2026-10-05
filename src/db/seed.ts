@@ -2,7 +2,7 @@ import { sql } from 'drizzle-orm'
 import { env } from '../config/env.ts'
 import { hashPassword } from '../modules/accounts/passwords.ts'
 import { db, pool } from './client.ts'
-import { phoneNumbers, tenants, users } from './schema.ts'
+import { phoneNumbers, subscriptionInvoices, tenants, users } from './schema.ts'
 import { seedDispatch } from './seed-dispatch.ts'
 
 // Resets the development database to demo data: one contractor, Desert Breeze Air, whose own
@@ -25,6 +25,7 @@ const [desert] = await db
     timezone: 'Asia/Manila',
     contactEmail: 'office@desert.test',
     contactPhone: '+16025550142', // the number on contractor-site
+    perJobFeeCents: 1500, // $15 per recovered job
   })
   .returning()
 
@@ -219,6 +220,19 @@ await seedDispatch(desert.id, {
       systemType: 'furnace',
     },
   ],
+})
+
+// Last month's recovered-job invoice, still to be paid, so the owner's Booking settings and
+// the admin console have one to show. The daily billing job makes real ones.
+const lastMonth = sql`date_trunc('month', now() at time zone ${desert.timezone}) - interval '1 month'`
+await db.insert(subscriptionInvoices).values({
+  tenantId: desert.id,
+  periodStart: sql`(${lastMonth})::date`,
+  periodEnd: sql`(${lastMonth} + interval '1 month')::date`,
+  monthlyFeeCents: 0,
+  recoveredJobs: 3,
+  perJobFeeCents: 1500,
+  totalCents: 4500,
 })
 
 await pool.end()

@@ -12,3 +12,14 @@ export const RevenueCatWebhook = z.object({
   }),
 })
 export type RevenueCatEvent = z.infer<typeof RevenueCatWebhook>['event']
+
+// What a contractor pays Relay for each recovered job. 0 = no fee.
+export const PerJobFeeInput = z.object({
+  perJobFeeCents: z
+    .number('Enter a fee in dollars and cents')
+    .int('Enter a fee in dollars and cents')
+    .min(0, 'Enter a fee of $0 or more')
+    .max(1_000_000, 'Enter a fee of $10,000 or less'),
+})
+
+export const InvoiceParams = z.object({ invoiceId: z.uuid() })

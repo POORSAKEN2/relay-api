@@ -3,13 +3,36 @@ import { Router } from 'express'
 import { env } from '../../config/env.ts'
 import { HttpError } from '../../lib/http-error.ts'
 import { requireRole } from '../../middleware/auth.ts'
-import { RevenueCatWebhook } from './billing.schemas.ts'
+import { TenantParams } from '../branding/branding.schemas.ts'
+import { InvoiceParams, PerJobFeeInput, RevenueCatWebhook } from './billing.schemas.ts'
 import * as billing from './billing.service.ts'
 
 export const billingRoutes = Router()
 
+const superadmin = requireRole('superadmin')
+
 billingRoutes.get('/billing', requireRole('owner'), async (req, res) => {
   res.json(await billing.getSubscription(req.user!))
+})
+
+billingRoutes.get('/billing/invoices', requireRole('owner'), async (req, res) => {
+  res.json({ invoices: await billing.listInvoices(req.user!) })
+})
+
+billingRoutes.get('/admin/tenants/:tenantId/billing', superadmin, async (req, res) => {
+  const { tenantId } = TenantParams.parse(req.params)
+  res.json(await billing.getTenantBilling(tenantId))
+})
+
+billingRoutes.put('/admin/tenants/:tenantId/per-job-fee', superadmin, async (req, res) => {
+  const { tenantId } = TenantParams.parse(req.params)
+  const { perJobFeeCents } = PerJobFeeInput.parse(req.body)
+  res.json(await billing.setPerJobFee(req.user!, tenantId, perJobFeeCents))
+})
+
+billingRoutes.post('/admin/invoices/:invoiceId/paid', superadmin, async (req, res) => {
+  const { invoiceId } = InvoiceParams.parse(req.params)
+  res.json({ invoice: await billing.markInvoicePaid(req.user!, invoiceId) })
 })
 
 // RevenueCat calls this for every purchase, renewal, billing problem and expiry. It answers 200

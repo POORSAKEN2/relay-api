@@ -328,6 +328,8 @@ export const phoneNumbers = pgTable(
 // Also used by contractor invoices (module 9).
 export const INVOICE_STATUSES = ['open', 'paid', 'void'] as const
 
+// One per contractor per month, for the recovered jobs (billing module). period_end is the
+// first day after the month.
 export const subscriptionInvoices = pgTable(
   'subscription_invoices',
   {
@@ -335,7 +337,7 @@ export const subscriptionInvoices = pgTable(
     tenantId: tenantId(),
     periodStart: date('period_start').notNull(),
     periodEnd: date('period_end').notNull(),
-    monthlyFeeCents: integer('monthly_fee_cents').notNull(),
+    monthlyFeeCents: integer('monthly_fee_cents').notNull(), // 0 while RevenueCat collects it
     recoveredJobs: integer('recovered_jobs').notNull(), // metered count, frozen when the invoice is made
     perJobFeeCents: integer('per_job_fee_cents').notNull(),
     totalCents: integer('total_cents').notNull(),
@@ -610,6 +612,9 @@ export const JOB_STATUSES = [
 ] as const
 // Feeds the recovered-revenue dashboard and the per-job fee.
 export const JOB_SOURCES = ['web', 'text_back', 'ai', 'recovery_text', 'office'] as const
+// Jobs Relay won back for the contractor: a missed-call text, the AI on the phone, or a text
+// to a homeowner who stopped booking. Each one is billed at tenants.per_job_fee_cents.
+export const RECOVERED_JOB_SOURCES = ['text_back', 'ai', 'recovery_text'] as const
 export const SYSTEM_TYPES = [
   'central_ac',
   'heat_pump',
