@@ -62,6 +62,44 @@ export async function getCharges(tenantId: string, jobId: string) {
   return summarize(await queries.listLines(tenantId, jobId))
 }
 
+// The homeowner paid the technician in person (cash or check) as the job closes: issues the
+// job's invoice for the approved lines, already paid, in the caller's transaction. A visit
+// with something to pay can't close without it. Returns the invoice and its lines, or null
+// when nothing was due.
+export async function recordPaymentInPerson(actor: Actor, jobId: string, paid: boolean, tx: Tx) {
+  const { lines, approvedTotalCents } = summarize(
+    await queries.listLines(actor.tenantId, jobId, tx),
+  )
+  if (approvedTotalCents === 0) return null
+  if (!paid) {
+    throw new HttpError(
+      422,
+      'payment_required',
+      'Tick that the homeowner paid before marking the job done.',
+    )
+  }
+  const invoice = await queries.insertPaidInvoice(actor.tenantId, jobId, approvedTotalCents, tx)
+  await audit.insertUserAction(
+    actor.tenantId,
+    {
+      actorUserId: actor.userId,
+      action: 'invoice.paid',
+      entityType: 'job',
+      entityId: jobId,
+      data: {
+        invoiceId: invoice.id,
+        number: invoice.number,
+        totalCents: invoice.totalCents,
+        how: 'in_person',
+      },
+    },
+    tx,
+  )
+  return { ...invoice, lines: lines.filter((line) => line.status === 'approved') }
+}
+
+export type PaidInvoice = NonNullable<Awaited<ReturnType<typeof recordPaymentInPerson>>>
+
 type Actor = { tenantId: string; userId: string }
 type CheckJob = (job: { technicianId: string | null }) => void
 

@@ -10,11 +10,11 @@ import { HttpError } from '../../lib/http-error.ts'
 import { photoTypeOf } from '../../lib/image-type.ts'
 import { formatDay, formatWindow } from '../../lib/labels.ts'
 import { tenantUrl } from '../../lib/tenant-url.ts'
-import { emitToTenant } from '../../realtime/index.ts'
 import * as audit from '../audit/audit.queries.ts'
 import * as booking from '../booking/booking.queries.ts'
-import { insertBookedJob, reserveWindow } from '../booking/booking.service.ts'
+import { announceBooking, insertBookedJob, reserveWindow } from '../booking/booking.service.ts'
 import * as customers from '../customers/customers.queries.ts'
+import { sendBookingConfirmation } from '../homeowner-messages/homeowner-messages.service.ts'
 import { sendText } from '../messaging/sms.ts'
 import { zipIsServed } from '../settings/settings.queries.ts'
 import * as queries from './online-booking.queries.ts'
@@ -286,6 +286,7 @@ export async function bookVisit(tenant: Tenant, input: BookingInput, ip: string 
     if (input.consent) {
       await recordConsent(tenant.id, { phone: input.phone, granted: true, ip, jobId: job.id }, tx)
     }
+    await sendBookingConfirmation(tenant.id, job.id, tx)
     // The booking this draft was for is made. An unknown token is ignored: a draft must never
     // stop a booking.
     const draft = input.draftToken
@@ -307,7 +308,7 @@ export async function bookVisit(tenant: Tenant, input: BookingInput, ip: string 
   })
 
   // The booking shows on the office's dispatch board right away.
-  emitToTenant(tenant.id, 'booking.created', { jobId: job.id, dates: [input.date] })
+  announceBooking(tenant.id, job, input.date)
   return { jobId: job.id }
 }
 

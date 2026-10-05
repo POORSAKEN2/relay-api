@@ -18,6 +18,27 @@ missing, and what a US launch would need on top.
 - [x] Sign-in codes come from the contractor's own sending number.
 - [x] The development log of every text stays, under `SMS_PROVIDER=log`.
 
+## Done (2026-10-05, homeowner messages)
+
+- [x] `src/modules/homeowner-messages/`: booking confirmation (every way of booking), visit
+      reminders 24 hours and 2 hours before (the `visit-reminders` job, every 5 minutes),
+      receipt when the technician records an in-person payment, review request when a job is
+      done (only with `tenants.review_url` set). Each goes as a text and, when the customer has
+      an address, as an email.
+- [x] Emails go through the same outbox as texts: a `messages` row with channel `email`,
+      saved in the change's transaction and sent by the sender loop with the same retries.
+      Emails skip consent and quiet hours.
+
+## Homeowner messages: still open
+
+- [ ] A 2-hour reminder for a visit that starts before quiet hours end (an 8 AM window) waits
+      until 8 AM, so it arrives as the window opens. Decide: skip it, or let reminders through
+      quiet hours.
+- [ ] Emails have no unsubscribe link and go out from `EMAIL_FROM` with no Reply-To. Set
+      Reply-To to the contractor's `contact_email` so replies reach them.
+- [ ] Rescheduling sends no `booking_changed` text yet; the reminders follow the new time.
+- [ ] Settings screen for `review_url` (today it can only be set in the database).
+
 ## Still to build
 
 - [ ] The resume link (`bookingLink` in `online-booking.service.ts`) is always

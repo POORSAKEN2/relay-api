@@ -8,6 +8,7 @@ import type { SessionUser } from '../accounts/accounts.service.ts'
 import * as audit from '../audit/audit.queries.ts'
 import { reserveWindow, tenantOf } from '../booking/booking.service.ts'
 import * as charges from '../charges/charges.service.ts'
+import { sendReviewRequest } from '../homeowner-messages/homeowner-messages.service.ts'
 import { sendText } from '../messaging/sms.ts'
 import * as queries from './dispatch.queries.ts'
 import type { SettableStatus, SlotInput } from './dispatch.schemas.ts'
@@ -246,7 +247,8 @@ async function textTechnician(
 // One status change, for the office's drawer and the technician's buttons alike: the only
 // place the status rules are applied. `checkJob` runs on the locked job before the rules (the
 // technician side checks the job is still theirs). `afterChange` runs in the same transaction,
-// only when the status really changed (a homeowner text, a note).
+// only when the status really changed (a homeowner text, a note). A job done, by either side,
+// asks the homeowner for a review, after anything `afterChange` sent.
 export async function changeStatus(change: {
   tenantId: string
   actorUserId: string
@@ -314,6 +316,7 @@ export async function changeStatus(change: {
       tx,
     )
     await change.afterChange?.(tx)
+    if (to === 'done') await sendReviewRequest(tenantId, job.id, tx)
     return { changed: true, date: job.date }
   })
 

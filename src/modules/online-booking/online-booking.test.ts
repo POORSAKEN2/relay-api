@@ -12,6 +12,7 @@ import {
   customers,
   jobItems,
   jobs,
+  messages,
   properties,
   serviceAreaZips,
   services,
@@ -236,6 +237,35 @@ describe('POST /api/online-booking/bookings', () => {
       jobId: job.id,
       dates: [TUESDAY],
     })
+    expect(emitToTenant).not.toHaveBeenCalledWith(
+      shop.tenant.id,
+      'booking.priority',
+      expect.anything(),
+    )
+  })
+
+  it('confirms the booking by text, sent because the consent is saved first, and by email', async () => {
+    const shop = await createServingShop()
+
+    const res = await post('bookings', bookingBody(shop)).expect(201)
+
+    const sent = await db.select().from(messages).orderBy(messages.channel)
+    expect(sent).toEqual([
+      expect.objectContaining({
+        channel: 'email',
+        contact: 'sam@example.com',
+        kind: 'booking_confirmation',
+        status: 'queued',
+        jobId: res.body.jobId,
+      }),
+      expect.objectContaining({
+        channel: 'sms',
+        contact: '+14805550199',
+        kind: 'booking_confirmation',
+        status: 'queued',
+        jobId: res.body.jobId,
+      }),
+    ])
   })
 
   it('records no consent when the box isn’t ticked', async () => {
@@ -252,6 +282,10 @@ describe('POST /api/online-booking/bookings', () => {
     const res = await post('bookings', bookingBody(shop, { priorityService: true })).expect(201)
     const [job] = await db.select().from(jobs).where(eq(jobs.id, res.body.jobId))
     expect(job).toMatchObject({ priority: true, priorityFeeCents: 4900, vulnerableOccupant: false })
+    expect(emitToTenant).toHaveBeenCalledWith(shop.tenant.id, 'booking.priority', {
+      jobId: job.id,
+      dates: [TUESDAY],
+    })
   })
 
   it('writes the booked lines: the service, and priority service when chosen', async () => {
@@ -290,6 +324,10 @@ describe('POST /api/online-booking/bookings', () => {
     const res = await post('bookings', bookingBody(shop, { vulnerableOccupant: true })).expect(201)
     const [job] = await db.select().from(jobs).where(eq(jobs.id, res.body.jobId))
     expect(job).toMatchObject({ priority: true, priorityFeeCents: 0, vulnerableOccupant: true })
+    expect(emitToTenant).toHaveBeenCalledWith(shop.tenant.id, 'booking.priority', {
+      jobId: job.id,
+      dates: [TUESDAY],
+    })
   })
 
   it('reuses a customer with the same phone and name, and their saved address', async () => {

@@ -1,9 +1,10 @@
 import { and, asc, eq, isNull, sql } from 'drizzle-orm'
 import { type Db, db, type Tx } from '../../db/client.ts'
-import { jobItems, jobs, priceItems, services, tenants } from '../../db/schema.ts'
+import { invoices, jobItems, jobs, priceItems, services, tenants } from '../../db/schema.ts'
 
-// Tenant-scoped: every query takes tenantId first. This module owns job_items and reads the
-// few other columns it needs itself, so it depends on no other module.
+// Tenant-scoped: every query takes tenantId first. This module owns job_items and the
+// homeowner's invoices, and reads the few other columns it needs itself, so it depends on no
+// other module.
 
 export const PRIORITY_LINE = 'Priority service'
 
@@ -116,4 +117,32 @@ export function decideProposed(
       quantity: jobItems.quantity,
       unitPriceCents: jobItems.unitPriceCents,
     })
+}
+
+// The job's invoice, already paid, numbered after the contractor's last one. The lock on the
+// contractor's row makes two jobs finishing at the same moment take turns for the number;
+// 'no key update' still lets other rows that point at the contractor be saved meanwhile.
+export async function insertPaidInvoice(
+  tenantId: string,
+  jobId: string,
+  totalCents: number,
+  tx: Tx,
+) {
+  await tx
+    .select({ id: tenants.id })
+    .from(tenants)
+    .where(eq(tenants.id, tenantId))
+    .for('no key update')
+  const [invoice] = await tx
+    .insert(invoices)
+    .values({
+      tenantId,
+      jobId,
+      number: sql`(select coalesce(max(${invoices.number}), 0) + 1 from ${invoices} where ${invoices.tenantId} = ${tenantId})`,
+      totalCents,
+      status: 'paid',
+      paidAt: new Date(),
+    })
+    .returning({ id: invoices.id, number: invoices.number, totalCents: invoices.totalCents })
+  return invoice
 }

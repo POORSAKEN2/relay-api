@@ -26,7 +26,7 @@ export async function sendText(
 
   // A sign-in code is never stored: anyone who can read messages could sign in with it.
   const isCode = text.kind === 'sign_in_code'
-  const message = await queries.insertText(
+  const message = await queries.insertMessage(
     {
       tenantId,
       channel: 'sms',

@@ -4,6 +4,7 @@ import { env } from '../config/env.ts'
 import { logger } from '../lib/logger.ts'
 import * as accounts from '../modules/accounts/accounts.service.ts'
 import * as billing from '../modules/billing/billing.service.ts'
+import * as homeownerMessages from '../modules/homeowner-messages/homeowner-messages.service.ts'
 import * as onlineBooking from '../modules/online-booking/online-booking.service.ts'
 
 const boss = new PgBoss(env.DATABASE_URL)
@@ -31,6 +32,12 @@ export async function startJobs() {
   await register('booking-recovery', { cron: '*/5 * * * *' }, async () => {
     const texted = await onlineBooking.sendRecoveryTexts()
     if (texted > 0) logger.info({ texted }, 'Booking recovery texts saved')
+  })
+
+  // Every 5 minutes: homeowners are reminded of their visit a day and two hours before it.
+  await register('visit-reminders', { cron: '*/5 * * * *' }, async () => {
+    const reminded = await homeownerMessages.sendVisitReminders()
+    if (reminded > 0) logger.info({ reminded }, 'Visit reminders saved')
   })
 
   // Daily: once a contractor's month has ended in its time zone, invoice its recovered jobs.

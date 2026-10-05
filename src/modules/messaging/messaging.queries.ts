@@ -43,7 +43,7 @@ export async function findQuietHours(tenantId: string, tx: Db = db) {
   return tenant
 }
 
-export async function insertText(values: typeof messages.$inferInsert, tx: Db = db) {
+export async function insertMessage(values: typeof messages.$inferInsert, tx: Db = db) {
   const [message] = await tx.insert(messages).values(values).returning({ id: messages.id })
   return message
 }
@@ -58,16 +58,16 @@ export async function findSendingNumber(tenantId: string) {
   return phone?.number
 }
 
-// Takes up to `limit` texts that are due and counts a try on each. Pushing send_after a minute
-// ahead is the lease: if the process dies mid-send, the text comes back then, and another
-// instance skips rows this one has locked. Sign-in codes are sent by sendText() itself.
-export function claimDueTexts(limit: number) {
+// Takes up to `limit` texts and emails that are due and counts a try on each. Pushing
+// send_after a minute ahead is the lease: if the process dies mid-send, the message comes back
+// then, and another instance skips rows this one has locked. Sign-in codes are sent by
+// sendText() itself.
+export function claimDueMessages(limit: number) {
   const due = db
     .select({ id: messages.id })
     .from(messages)
     .where(
       and(
-        eq(messages.channel, 'sms'),
         eq(messages.status, 'queued'),
         isNull(messages.providerMessageId),
         lte(messages.sendAfter, sql`now()`),
@@ -87,7 +87,9 @@ export function claimDueTexts(limit: number) {
     .returning({
       id: messages.id,
       tenantId: messages.tenantId,
+      channel: messages.channel,
       contact: messages.contact,
+      subject: messages.subject,
       body: messages.body,
       attempts: messages.attempts,
     })
@@ -101,8 +103,9 @@ export async function markHandedOver(messageId: string, providerMessageId: strin
     .where(eq(messages.id, messageId))
 }
 
-// Only the 'log' provider: nothing will report back, so it counts as sent at once.
-export async function markLogged(messageId: string) {
+// Nothing will report back (an email, or a text under SMS_PROVIDER=log), so it counts as sent
+// at once.
+export async function markSent(messageId: string) {
   await db.update(messages).set({ status: 'sent' }).where(eq(messages.id, messageId))
 }
 
