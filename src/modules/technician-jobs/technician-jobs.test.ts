@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { asc, eq } from 'drizzle-orm'
 import request from 'supertest'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -7,10 +8,11 @@ import {
   resetDb,
   type Shop,
   signInTechnician,
+  TUESDAY,
 } from '../../../test/helpers.ts'
 import { createApp } from '../../app.ts'
 import { db } from '../../db/client.ts'
-import { bookingDrafts, bookingPhotos } from '../../db/schema.ts'
+import { bookingDrafts, bookingPhotos, messages } from '../../db/schema.ts'
 import { formatDay } from '../../lib/labels.ts'
 
 vi.mock('../../realtime/index.ts', () => ({ emitToTenant: vi.fn() }))
@@ -277,5 +279,94 @@ describe('GET /api/my-jobs/:jobId', () => {
       .get(`/api/jobs/${job.id}`)
       .set('Cookie', await signInTechnician(shop.mike))
       .expect(403)
+  })
+})
+
+describe('GET /api/job-links/:token', () => {
+  const tokenIn = (body: string) => body.match(/\/j\/([\w-]+)$/)![1]
+
+  it('turns a valid token into the job id, and refuses expired, cancelled or wrong-user tokens', async () => {
+    const shop = await createShop('desert')
+    const other = await createShop('other')
+    const job = await createJob(shop)
+
+    const mikeCookie = await signInTechnician(shop.mike)
+    const anaCookie = await signInTechnician(shop.ana)
+    const otherTechCookie = await signInTechnician(other.mike)
+
+    // Assign Mike through slot endpoint as office
+    await request(app)
+      .put(`/api/jobs/${job.id}/slot`)
+      .set('Cookie', shop.cookie)
+      .send({ date: TUESDAY, windowId: shop.tueMorning.id, technicianId: shop.mike.id })
+      .expect(200)
+
+    const [firstText] = await db
+      .select()
+      .from(messages)
+      .where(eq(messages.jobId, job.id))
+      .orderBy(asc(messages.createdAt))
+    const firstToken = tokenIn(firstText.body)
+
+    // Mike's session gets { jobId }
+    const res1 = await request(app)
+      .get(`/api/job-links/${firstToken}`)
+      .set('Cookie', mikeCookie)
+      .expect(200)
+    expect(res1.body).toEqual({ jobId: job.id })
+
+    // Move to afternoon -> second token
+    await request(app)
+      .put(`/api/jobs/${job.id}/slot`)
+      .set('Cookie', shop.cookie)
+      .send({ date: TUESDAY, windowId: shop.tueAfternoon.id, technicianId: shop.mike.id })
+      .expect(200)
+
+    const texts = await db
+      .select()
+      .from(messages)
+      .where(eq(messages.jobId, job.id))
+      .orderBy(asc(messages.createdAt))
+    const secondToken = tokenIn(texts[1].body)
+
+    // After a second move, the first token gets 404 link_expired, the second works
+    const expiredRes = await request(app)
+      .get(`/api/job-links/${firstToken}`)
+      .set('Cookie', mikeCookie)
+      .expect(404)
+    expect(expiredRes.body.error).toEqual({
+      code: 'link_expired',
+      message: 'This job link has expired.',
+    })
+
+    const res2 = await request(app)
+      .get(`/api/job-links/${secondToken}`)
+      .set('Cookie', mikeCookie)
+      .expect(200)
+    expect(res2.body).toEqual({ jobId: job.id })
+
+    // Ana's session with Mike's token: 404
+    await request(app).get(`/api/job-links/${secondToken}`).set('Cookie', anaCookie).expect(404)
+
+    // Another contractor's technician: 404
+    await request(app)
+      .get(`/api/job-links/${secondToken}`)
+      .set('Cookie', otherTechCookie)
+      .expect(404)
+
+    // Office session: 403
+    await request(app).get(`/api/job-links/${secondToken}`).set('Cookie', shop.cookie).expect(403)
+
+    // No session: 401
+    await request(app).get(`/api/job-links/${secondToken}`).expect(401)
+
+    // After the office marks the job cancelled: 404
+    await request(app)
+      .post(`/api/jobs/${job.id}/status`)
+      .set('Cookie', shop.cookie)
+      .send({ status: 'cancelled' })
+      .expect(200)
+
+    await request(app).get(`/api/job-links/${secondToken}`).set('Cookie', mikeCookie).expect(404)
   })
 })

@@ -6,6 +6,7 @@ import {
   CompleteInput,
   DecisionInput,
   EquipmentInput,
+  LinkParams,
   NoAccessInput,
   OnMyWayInput,
   RepairInput,
@@ -121,4 +122,9 @@ technicianJobsRoutes.patch('/my-jobs/:jobId/equipment', technician, async (req, 
   const { jobId } = JobParams.parse(req.params)
   const input = EquipmentInput.parse(req.body)
   res.json(await technicianJobs.setEquipment(req.user!, jobId, input))
+})
+
+technicianJobsRoutes.get('/job-links/:token', technician, async (req, res) => {
+  const { token } = LinkParams.parse(req.params)
+  res.json(await technicianJobs.openJobLink(req.user!, token))
 })
