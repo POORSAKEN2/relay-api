@@ -10,6 +10,8 @@ export type TextRule = { consent: 'required' | 'opt_out' | 'none'; quietHours: b
 
 // To the contractor's own people: they need their sign-in codes and alerts at any hour.
 const STAFF: TextRule = { consent: 'none', quietHours: false }
+// Routine office news: no need to wake anyone.
+const STAFF_ROUTINE: TextRule = { consent: 'none', quietHours: true }
 // Answers something the homeowner just did (called, texted in). They never filled in the
 // booking form, so there is no consent to find; a STOP still blocks.
 const REPLY: TextRule = { consent: 'opt_out', quietHours: false }
@@ -23,7 +25,7 @@ export const TEXT_RULES: Record<MessageKind, TextRule> = {
   inbound: STAFF, // never sent; here only so every kind has a rule
   sign_in_code: STAFF,
   job_assigned: STAFF,
-  new_booking_alert: STAFF,
+  new_booking_alert: STAFF_ROUTINE,
   priority_alert: STAFF,
   text_back: REPLY,
   manual: REPLY,
