@@ -1,5 +1,5 @@
-import { expect, it } from 'vitest'
-import { Phone } from './fields.ts'
+import { describe, expect, it } from 'vitest'
+import { OptionalPhone, Phone } from './fields.ts'
 
 it('reads Philippine mobiles in every common form', () => {
   expect(Phone.parse('0917 123 4567')).toBe('+639171234567')
@@ -20,4 +20,22 @@ it('refuses anything else', () => {
       'Enter a mobile number, like 0917 123 4567',
     )
   }
+})
+
+describe('OptionalPhone', () => {
+  it('turns empty and blank strings into null', () => {
+    expect(OptionalPhone.parse('')).toBeNull()
+    expect(OptionalPhone.parse('  ')).toBeNull()
+    expect(OptionalPhone.parse(null)).toBeNull()
+  })
+
+  it('normalises a valid phone', () => {
+    expect(OptionalPhone.parse('0917 123 4567')).toBe('+639171234567')
+  })
+
+  it('refuses an invalid phone with the phone error message', () => {
+    expect(OptionalPhone.safeParse('12').error?.issues[0].message).toBe(
+      'Enter a mobile number, like 0917 123 4567',
+    )
+  })
 })

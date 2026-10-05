@@ -58,6 +58,7 @@ describe('GET /api/staff', () => {
       id: expect.any(String),
       name: expect.any(String),
       email: expect.any(String),
+      phone: null,
       role: expect.stringMatching(/owner|office/),
       active: true,
       invited: false,
@@ -69,6 +70,20 @@ describe('GET /api/staff', () => {
     const shop = await createShop('desert')
     const cookie = await signInTechnician(shop.mike)
     await request(app).get('/api/staff').set('Cookie', cookie).expect(403)
+  })
+
+  it('returns the phone number on staff members who have one', async () => {
+    const { shop, ownerCookie } = await shopWithOwner()
+    await invite(ownerCookie, {
+      name: 'Dana',
+      email: 'dana@desert.test',
+      phone: '0917 123 4567',
+      role: 'office',
+    })
+
+    const res = await request(app).get('/api/staff').set('Cookie', shop.cookie).expect(200)
+    const dana = res.body.staff.find((p: { email: string }) => p.email === 'dana@desert.test')
+    expect(dana.phone).toBe('+639171234567')
   })
 })
 
@@ -88,6 +103,7 @@ describe('POST /api/staff', () => {
         id: expect.any(String),
         name: 'Dana Torres',
         email: 'dana@desert.test',
+        phone: null,
         role: 'office',
         active: true,
         invited: true,
@@ -149,6 +165,33 @@ describe('POST /api/staff', () => {
     expect(res.body.error.code).toBe('forbidden')
 
     await invite(ownerCookie, body).expect(201)
+  })
+
+  it('saves an optional phone and normalises it', async () => {
+    const { ownerCookie } = await shopWithOwner()
+
+    const res = await invite(ownerCookie, {
+      name: 'Dana',
+      email: 'dana@desert.test',
+      phone: '0917 123 4567',
+      role: 'office',
+    }).expect(201)
+
+    expect(res.body.person.phone).toBe('+639171234567')
+  })
+
+  it('refuses a phone another account already uses', async () => {
+    const { shop, ownerCookie } = await shopWithOwner()
+
+    const res = await invite(ownerCookie, {
+      name: 'Dana',
+      email: 'dana@desert.test',
+      phone: shop.mike.phone,
+      role: 'office',
+    }).expect(409)
+
+    expect(res.body.error.code).toBe('phone_taken')
+    expect(sendEmail).not.toHaveBeenCalled()
   })
 
   it('rejects a bad body with field errors', async () => {
@@ -279,6 +322,28 @@ describe('PATCH /api/staff/:id', () => {
       .from(signInLinks)
       .where(and(eq(signInLinks.userId, id), isNull(signInLinks.usedAt)))
     expect(unused).toHaveLength(0)
+  })
+
+  it('clears a saved phone with an empty string', async () => {
+    const { ownerCookie } = await shopWithOwner()
+    const created = await invite(ownerCookie, {
+      name: 'Dana',
+      email: 'dana@desert.test',
+      phone: '0917 123 4567',
+      role: 'office',
+    })
+    const id = created.body.person.id
+    expect(created.body.person.phone).toBe('+639171234567')
+
+    const res = await request(app)
+      .patch(`/api/staff/${id}`)
+      .set('Cookie', ownerCookie)
+      .send({ name: 'Dana', email: 'dana@desert.test', phone: '', role: 'office' })
+      .expect(200)
+
+    expect(res.body.person.phone).toBeNull()
+    const [saved] = await db.select().from(users).where(eq(users.id, id))
+    expect(saved.phone).toBeNull()
   })
 
   it('keeps office users from touching owners or promoting anyone', async () => {
