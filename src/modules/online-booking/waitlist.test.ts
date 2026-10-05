@@ -5,9 +5,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createJob, createShop, resetDb } from '../../../test/helpers.ts'
 import { createApp } from '../../app.ts'
 import { db } from '../../db/client.ts'
-import { arrivalWindows, serviceAreaZips, tenants, waitlistEntries } from '../../db/schema.ts'
+import {
+  arrivalWindows,
+  consentEvents,
+  customers,
+  jobs,
+  messages,
+  serviceAreaZips,
+  tenants,
+  waitlistEntries,
+} from '../../db/schema.ts'
 import { weekdayOf } from '../../lib/labels.ts'
 import { hashLinkToken } from '../../lib/link-token.ts'
+import { sendWaitlistOffers } from './waitlist.service.ts'
 
 vi.mock('../../realtime/index.ts', () => ({ emitToTenant: vi.fn() }))
 
@@ -104,6 +114,19 @@ function entries() {
   return db.select().from(waitlistEntries).orderBy(waitlistEntries.createdAt)
 }
 
+function offerTexts() {
+  return db
+    .select()
+    .from(messages)
+    .where(eq(messages.kind, 'waitlist_offer'))
+    .orderBy(messages.createdAt)
+}
+
+// The link token in an offer text.
+function tokenIn(body: string) {
+  return /\?offer=([\w-]+)/.exec(body)![1]
+}
+
 function bookingBody(shop: WaitlistShop, overrides: Record<string, unknown> = {}) {
   return {
     serviceId: shop.service.id,
@@ -189,5 +212,215 @@ describe('the hold', () => {
     await insertOffer(shop, shop.soon, -1)
 
     await post('bookings', bookingBody(shop)).expect(201)
+  })
+})
+
+// Makes every open offer run out now, as if 30 minutes had passed.
+async function runOut() {
+  await db
+    .update(waitlistEntries)
+    .set({ offerExpiresAt: new Date(Date.now() - 60_000) })
+    .where(eq(waitlistEntries.status, 'offered'))
+}
+
+describe('sendWaitlistOffers', () => {
+  it('offers the soonest open place to the first in line, priority first', async () => {
+    const shop = await createWaitlistShop()
+    await join(shop, { name: 'Ann Early', phone: '(480) 555-0101' })
+    await join(shop, { name: 'Bo Priority', phone: '(480) 555-0102', vulnerableOccupant: true })
+    await fillPlace(shop, shop.later)
+
+    expect(await sendWaitlistOffers()).toEqual({ offered: 1, expired: 0 })
+
+    const [ann, bo] = await entries()
+    expect(ann).toMatchObject({ status: 'waiting', offerDate: null })
+    expect(bo).toMatchObject({
+      status: 'offered',
+      offerDate: shop.soon,
+      offerWindowId: shop.window.id,
+    })
+    expect(bo.offerExpiresAt!.getTime() - Date.now()).toBeGreaterThan(29 * 60_000)
+    const [text] = await offerTexts()
+    expect(text).toMatchObject({
+      contact: '+14805550102',
+      customerId: bo.customerId,
+      status: 'queued',
+    })
+    expect(text.body).toMatch(
+      /^desert HVAC: a time opened up: \w{3}, \w{3} \d{1,2}, 8 AM - 12 PM\. It's yours for 30 minutes: https:\/\/desert\.localhost\/\?offer=[\w-]+ Reply STOP to opt out\.$/,
+    )
+    expect(hashLinkToken(tokenIn(text.body))).toBe(bo.offerLinkHash)
+  })
+
+  it('offers each open place once, soonest first, to whoever joined first', async () => {
+    const shop = await createWaitlistShop()
+    await join(shop, { name: 'Ann Early', phone: '(480) 555-0101' })
+    await join(shop, { name: 'Cy Middle', phone: '(480) 555-0103' })
+    await join(shop, { name: 'Di Late', phone: '(480) 555-0104' })
+
+    expect(await sendWaitlistOffers()).toEqual({ offered: 2, expired: 0 })
+    const [ann, cy, di] = await entries()
+    expect(ann.offerDate).toBe(shop.soon)
+    expect(cy.offerDate).toBe(shop.later)
+    expect(di.status).toBe('waiting')
+
+    // Both places are held now: nothing more to offer.
+    expect(await sendWaitlistOffers()).toEqual({ offered: 0, expired: 0 })
+    expect(await offerTexts()).toHaveLength(2)
+  })
+
+  it('offers no place that starts within 2 hours', async () => {
+    const shop = await createWaitlistShop()
+    await join(shop, { name: 'Ann Early', phone: '(480) 555-0101' })
+    await fillPlace(shop, shop.soon)
+    await fillPlace(shop, shop.later)
+    // It is about noon there: today's 1 PM window starts within the hour. Its date a week on
+    // is taken.
+    const today = localDate(shop.timezone, 0)
+    const values = { tenantId: shop.tenant.id, weekday: weekdayOf(today), jobCap: 1 }
+    await db.insert(arrivalWindows).values({ ...values, startsAt: '13:00', endsAt: '15:00' })
+    await fillPlace(shop, localDate(shop.timezone, 7), '13:00', '15:00')
+
+    expect(await sendWaitlistOffers()).toEqual({ offered: 0, expired: 0 })
+
+    // 3 PM today is more than 2 hours off.
+    const [later] = await db
+      .insert(arrivalWindows)
+      .values({ ...values, startsAt: '15:00', endsAt: '17:00' })
+      .returning()
+    expect(await sendWaitlistOffers()).toEqual({ offered: 1, expired: 0 })
+    const [ann] = await entries()
+    expect(ann).toMatchObject({ offerDate: today, offerWindowId: later.id })
+  })
+
+  it('makes no offers in quiet hours', async () => {
+    const shop = await createWaitlistShop()
+    await join(shop, { name: 'Ann Early', phone: '(480) 555-0101' })
+    // It is about noon there.
+    await db
+      .update(tenants)
+      .set({ quietHoursStart: '11:00', quietHoursEnd: '13:00' })
+      .where(eq(tenants.id, shop.tenant.id))
+
+    expect(await sendWaitlistOffers()).toEqual({ offered: 0, expired: 0 })
+    expect(await offerTexts()).toEqual([])
+  })
+
+  it('makes no offers for a suspended contractor', async () => {
+    const shop = await createWaitlistShop()
+    await join(shop, { name: 'Ann Early', phone: '(480) 555-0101' })
+    await db.update(tenants).set({ status: 'suspended' }).where(eq(tenants.id, shop.tenant.id))
+
+    expect(await sendWaitlistOffers()).toEqual({ offered: 0, expired: 0 })
+  })
+
+  it('skips a homeowner with no phone any more', async () => {
+    const shop = await createWaitlistShop()
+    await join(shop, { name: 'Ann Early', phone: '(480) 555-0101' })
+    await join(shop, { name: 'Cy Middle', phone: '(480) 555-0103' })
+    await fillPlace(shop, shop.later)
+    await db.update(customers).set({ phone: null }).where(eq(customers.phone, '+14805550101'))
+
+    expect(await sendWaitlistOffers()).toEqual({ offered: 1, expired: 0 })
+    const [ann, cy] = await entries()
+    expect(ann.status).toBe('waiting')
+    expect(cy.status).toBe('offered')
+  })
+
+  it('never lets an offer and a booking both take the last place', async () => {
+    const shop = await createWaitlistShop()
+    await join(shop, { name: 'Ann Early', phone: '(480) 555-0101' })
+    await fillPlace(shop, shop.later)
+    const soonStart = await localMoment(shop.timezone, shop.soon, '08:00')
+
+    await Promise.all([sendWaitlistOffers(), post('bookings', bookingBody(shop))])
+
+    const booked = await db.select().from(jobs).where(eq(jobs.windowStartsAt, soonStart))
+    const held = (await entries()).filter((entry) => entry.status === 'offered')
+    expect(booked.length + held.length).toBe(1)
+  })
+
+  describe('an offer that runs out', () => {
+    it('keeps the homeowner in line and passes the place to the next one', async () => {
+      const shop = await createWaitlistShop()
+      await join(shop, { name: 'Ann Early', phone: '(480) 555-0101' })
+      await join(shop, { name: 'Cy Middle', phone: '(480) 555-0103' })
+      await fillPlace(shop, shop.later)
+      await sendWaitlistOffers()
+      await runOut()
+
+      expect(await sendWaitlistOffers()).toEqual({ offered: 1, expired: 1 })
+      const [ann, cy] = await entries()
+      expect(ann).toMatchObject({ status: 'waiting', offersMissed: 1, offerLinkHash: null })
+      expect(cy).toMatchObject({ status: 'offered', offerDate: shop.soon })
+    })
+
+    it('takes the homeowner off after 2, with one last text', async () => {
+      const shop = await createWaitlistShop()
+      await join(shop, { name: 'Ann Early', phone: '(480) 555-0101' })
+      const later = await fillPlace(shop, shop.later)
+      await sendWaitlistOffers()
+      await runOut()
+      // The same place is never offered to them twice.
+      expect(await sendWaitlistOffers()).toEqual({ offered: 0, expired: 1 })
+
+      // Another place opens: their second offer.
+      await db.update(jobs).set({ status: 'cancelled' }).where(eq(jobs.id, later.id))
+      expect(await sendWaitlistOffers()).toEqual({ offered: 1, expired: 0 })
+      await runOut()
+
+      expect(await sendWaitlistOffers()).toEqual({ offered: 0, expired: 1 })
+      const [ann] = await entries()
+      expect(ann).toMatchObject({ status: 'expired', offersMissed: 2, offerLinkHash: null })
+      const texts = await offerTexts()
+      expect(texts).toHaveLength(3)
+      expect(texts[2].body).toBe(
+        "desert HVAC: we've taken you off the waitlist. Book anytime: https://desert.localhost/ Reply STOP to opt out.",
+      )
+    })
+  })
+
+  describe('closing entries', () => {
+    it('takes a homeowner off after 14 days, without a text', async () => {
+      const shop = await createWaitlistShop()
+      await join(shop, { name: 'Ann Early', phone: '(480) 555-0101' })
+      await db.update(waitlistEntries).set({ endsAt: new Date(Date.now() - 60_000) })
+
+      expect(await sendWaitlistOffers()).toEqual({ offered: 0, expired: 0 })
+      const [ann] = await entries()
+      expect(ann.status).toBe('expired')
+      expect(await offerTexts()).toEqual([])
+    })
+
+    it('marks the entry booked once the homeowner books any visit', async () => {
+      const shop = await createWaitlistShop()
+      await join(shop, { name: 'Ann Early', phone: '(480) 555-0101' })
+      await post(
+        'bookings',
+        bookingBody(shop, { name: 'Ann Early', phone: '(480) 555-0101' }),
+      ).expect(201)
+
+      expect(await sendWaitlistOffers()).toEqual({ offered: 0, expired: 0 })
+      const [ann] = await entries()
+      expect(ann.status).toBe('booked')
+    })
+
+    it('removes a homeowner who opted out of texts', async () => {
+      const shop = await createWaitlistShop()
+      await join(shop, { name: 'Ann Early', phone: '(480) 555-0101' })
+      // Recorded by the office here: a STOP reply would need the text it answered.
+      await db.insert(consentEvents).values({
+        tenantId: shop.tenant.id,
+        contact: '+14805550101',
+        channel: 'sms',
+        granted: false,
+        source: 'office',
+      })
+
+      expect(await sendWaitlistOffers()).toEqual({ offered: 0, expired: 0 })
+      const [ann] = await entries()
+      expect(ann.status).toBe('removed')
+      expect(await offerTexts()).toEqual([])
+    })
   })
 })

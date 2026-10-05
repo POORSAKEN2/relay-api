@@ -4,6 +4,7 @@ import { env } from '../config/env.ts'
 import { logger } from '../lib/logger.ts'
 import * as accounts from '../modules/accounts/accounts.service.ts'
 import * as onlineBooking from '../modules/online-booking/online-booking.service.ts'
+import * as waitlist from '../modules/online-booking/waitlist.service.ts'
 
 const boss = new PgBoss(env.DATABASE_URL)
 
@@ -30,6 +31,12 @@ export async function startJobs() {
   await register('booking-recovery', { cron: '*/5 * * * *' }, async () => {
     const texted = await onlineBooking.sendRecoveryTexts()
     if (texted > 0) logger.info({ texted }, 'Booking recovery texts saved')
+  })
+
+  // Every minute: a place that opened goes to the next homeowner on the waitlist.
+  await register('waitlist-offers', { cron: '* * * * *' }, async () => {
+    const { offered, expired } = await waitlist.sendWaitlistOffers()
+    if (offered > 0 || expired > 0) logger.info({ offered, expired }, 'Waitlist offers made')
   })
 
   // Daily: photos on bookings nobody finished go 30 days after the homeowner's last activity.
