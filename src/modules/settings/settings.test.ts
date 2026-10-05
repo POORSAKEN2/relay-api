@@ -149,3 +149,44 @@ it('is for owner and office staff only', async () => {
     .send({ priorityFeeCents: 100 })
     .expect(200)
 })
+
+describe('GET /api/settings/booking-links', () => {
+  function getLinks(shop: Shop) {
+    return request(app).get('/api/settings/booking-links').set('Cookie', shop.cookie)
+  }
+
+  it('gives the booking link, the Google link and the website snippet', async () => {
+    const shop = await createShop('desert')
+
+    const res = await getLinks(shop).expect(200)
+    expect(res.body).toEqual({
+      bookingUrl: 'https://desert.localhost/',
+      googleUrl: 'https://desert.localhost/?from=google',
+      widgetSnippet: '<script src="https://desert.localhost/widget.js" async></script>',
+    })
+  })
+
+  it('uses the contractor’s own domain once it is verified', async () => {
+    const shop = await createShop('desert')
+    const where = eq(tenants.id, shop.tenant.id)
+    await db.update(tenants).set({ customDomain: 'book.desertbreeze.com' }).where(where)
+    expect((await getLinks(shop).expect(200)).body.bookingUrl).toBe('https://desert.localhost/')
+
+    await db.update(tenants).set({ customDomainVerifiedAt: new Date() }).where(where)
+    expect((await getLinks(shop).expect(200)).body).toMatchObject({
+      bookingUrl: 'https://book.desertbreeze.com/',
+      googleUrl: 'https://book.desertbreeze.com/?from=google',
+    })
+  })
+
+  it('is for the contractor’s staff only', async () => {
+    const shop = await createShop('desert')
+    const technician = await createUser('technician', shop.tenant.id)
+
+    await request(app).get('/api/settings/booking-links').expect(401)
+    await request(app)
+      .get('/api/settings/booking-links')
+      .set('Cookie', await signIn(technician.email))
+      .expect(403)
+  })
+})
