@@ -8,6 +8,7 @@ import {
   tenants,
   webhookEvents,
 } from '../../db/schema.ts'
+import { startOfLocalDay } from '../../lib/local-day.ts'
 
 type SubscriptionStatus = (typeof SUBSCRIPTION_STATUSES)[number]
 
@@ -69,9 +70,25 @@ export async function listTenantsToInvoice(now: Date) {
     .where(gt(tenants.perJobFeeCents, 0))
 }
 
-// Recovered jobs booked from periodStart up to (not including) periodEnd, local dates in the
-// contractor's time zone. Holds nobody paid for have no booked_at, so they never count; a
-// cancelled job doesn't count either.
+// Recovered jobs booked from periodStart up to (not including) periodEnd, local dates in
+// the contractor's time zone. Holds nobody paid for have no booked_at, so they never
+// count; a cancelled job doesn't count either. The per-job fee and the recovery dashboard
+// both use this, so the owner is billed for exactly the jobs the dashboard shows.
+export function recoveredJobsBookedIn(
+  tenantId: string,
+  timezone: string,
+  periodStart: string,
+  periodEnd: string,
+) {
+  return and(
+    eq(jobs.tenantId, tenantId),
+    inArray(jobs.source, [...RECOVERED_JOB_SOURCES]),
+    ne(jobs.status, 'cancelled'),
+    gte(jobs.bookedAt, startOfLocalDay(periodStart, timezone)),
+    lt(jobs.bookedAt, startOfLocalDay(periodEnd, timezone)),
+  )
+}
+
 export async function countRecoveredJobs(
   tenantId: string,
   timezone: string,
@@ -81,15 +98,7 @@ export async function countRecoveredJobs(
   const [row] = await db
     .select({ count: count() })
     .from(jobs)
-    .where(
-      and(
-        eq(jobs.tenantId, tenantId),
-        inArray(jobs.source, [...RECOVERED_JOB_SOURCES]),
-        ne(jobs.status, 'cancelled'),
-        gte(jobs.bookedAt, sql`${periodStart}::date::timestamp at time zone ${timezone}`),
-        lt(jobs.bookedAt, sql`${periodEnd}::date::timestamp at time zone ${timezone}`),
-      ),
-    )
+    .where(recoveredJobsBookedIn(tenantId, timezone, periodStart, periodEnd))
   return row.count
 }
 
