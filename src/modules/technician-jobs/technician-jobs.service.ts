@@ -22,6 +22,7 @@ import * as catalog from '../catalog/catalog.service.ts'
 import * as charges from '../charges/charges.service.ts'
 import * as dispatchQueries from '../dispatch/dispatch.queries.ts'
 import { arrivalLabel, changeStatus, groupWorkPhotos } from '../dispatch/dispatch.service.ts'
+import { sendReceipt } from '../homeowner-messages/homeowner-messages.service.ts'
 import { sendText } from '../messaging/sms.ts'
 import * as queries from './technician-jobs.queries.ts'
 import { noAccessText, onMyWayText, runningLateText } from './texts.ts'
@@ -311,8 +312,17 @@ export function noAccess(user: SessionUser, jobId: string, note: string) {
   })
 }
 
-export function completeJob(user: SessionUser, jobId: string) {
-  return changeMyJob(user, jobId, 'done')
+// Job complete: a visit with something to pay closes only once the homeowner paid in person.
+// The paid invoice is issued and the receipt sent with the change.
+export function completeJob(user: SessionUser, jobId: string, paidInPerson: boolean) {
+  const tenantId = tenantOf(user)
+  return changeMyJob(user, jobId, 'done', {
+    afterChange: async (tx) => {
+      const actor = { tenantId, userId: user.id }
+      const invoice = await charges.recordPaymentInPerson(actor, jobId, paidInPerson, tx)
+      if (invoice) await sendReceipt(tenantId, jobId, invoice, tx)
+    },
+  })
 }
 
 // Running late moves the arrival time, not the status, so it doesn't go through

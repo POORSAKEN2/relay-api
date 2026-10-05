@@ -20,6 +20,7 @@ import {
   customers,
   jobItems,
   jobs,
+  messages,
   properties,
   services,
 } from '../../db/schema.ts'
@@ -167,6 +168,41 @@ describe('POST /api/bookings', () => {
       'booking.priority',
       expect.anything(),
     )
+  })
+
+  it('confirms the booking to the homeowner by text and by email', async () => {
+    const shop = await createShop('desert')
+
+    const res = await book(shop, newCustomerBooking(shop)).expect(201)
+
+    const sent = await db.select().from(messages).orderBy(messages.channel)
+    expect(sent).toEqual([
+      expect.objectContaining({
+        channel: 'email',
+        contact: 'sam@example.com',
+        kind: 'booking_confirmation',
+        subject: 'Your visit with desert HVAC is booked',
+        status: 'queued',
+        jobId: res.body.jobId,
+      }),
+      expect.objectContaining({
+        channel: 'sms',
+        contact: '+14805550199',
+        kind: 'booking_confirmation',
+        body: "desert HVAC: you're booked for AC repair on Tue, Jan 8, 8 AM-12 PM. We'll text you a reminder before the visit. Reply STOP to opt out.",
+        status: 'queued',
+        jobId: res.body.jobId,
+      }),
+    ])
+  })
+
+  it('saves the confirmation text as blocked when the customer did not agree to texts', async () => {
+    const shop = await createShop('desert')
+
+    await book(shop, newCustomerBooking(shop, { consentToTexts: false })).expect(201)
+
+    const [text] = await db.select().from(messages).where(eq(messages.channel, 'sms'))
+    expect(text).toMatchObject({ status: 'blocked', blockedReason: 'no_consent' })
   })
 
   it('books an existing customer at an existing address and flags a vulnerable occupant', async () => {

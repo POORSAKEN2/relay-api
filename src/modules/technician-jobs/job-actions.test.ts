@@ -14,13 +14,16 @@ import {
   auditEvents,
   consentEvents,
   customers,
+  invoices,
   jobNotes,
   jobs,
   messages,
   properties,
+  tenants,
 } from '../../db/schema.ts'
 import { formatClock } from '../../lib/labels.ts'
 import { emitToTenant } from '../../realtime/index.ts'
+import { addBookedLines } from '../charges/charges.service.ts'
 import { onMyWayText, runningLateText } from './texts.ts'
 
 vi.mock('../../realtime/index.ts', () => ({ emitToTenant: vi.fn() }))
@@ -171,7 +174,7 @@ describe('Running late', () => {
 })
 
 describe('Start job and Job complete', () => {
-  it('starts and completes the visit without texting the homeowner', async () => {
+  it('starts and completes a visit with nothing to pay, sending no receipt', async () => {
     const { job, cookie } = await mikesJob({ status: 'en_route', etaAt: new Date() })
 
     const started = await act(cookie, job.id, 'start').expect(200)
@@ -190,6 +193,103 @@ describe('Start job and Job complete', () => {
     const res = await act(cookie, job.id, 'complete').expect(422)
     expect(res.body.error.message).toBe(
       'This job is booked, so it can’t be marked done. Mark it in progress first.',
+    )
+  })
+
+  // An in-progress visit with its $89 diagnostic line, for a homeowner with a phone that agreed
+  // to texts and an email address.
+  async function visitToPay() {
+    const found = await mikesJob({ status: 'in_progress' })
+    const { shop, job } = found
+    await addBookedLines(shop.tenant.id, job.id, db)
+    await db
+      .update(customers)
+      .set({ email: 'maria@example.com' })
+      .where(eq(customers.id, shop.customer.id))
+    await db.insert(consentEvents).values({
+      tenantId: shop.tenant.id,
+      contact: shop.customer.phone!,
+      channel: 'sms',
+      granted: true,
+      source: 'office',
+    })
+    return found
+  }
+
+  it('won’t close a visit with something to pay until the homeowner paid', async () => {
+    const { job, cookie } = await visitToPay()
+
+    const res = await act(cookie, job.id, 'complete').expect(422)
+    expect(res.body.error.message).toBe('Tick that the homeowner paid before marking the job done.')
+    expect((await savedJob(job.id)).status).toBe('in_progress')
+    expect(await db.select().from(invoices)).toHaveLength(0)
+    expect(await db.select().from(messages)).toHaveLength(0)
+  })
+
+  it('records the in-person payment as a paid invoice and sends the receipt', async () => {
+    const { shop, job, cookie } = await visitToPay()
+
+    await act(cookie, job.id, 'complete', { paidInPerson: true }).expect(200)
+
+    const [invoice] = await db.select().from(invoices)
+    expect(invoice).toMatchObject({ jobId: job.id, number: 1, totalCents: 8900, status: 'paid' })
+    expect(invoice.paidAt).toBeInstanceOf(Date)
+    const audit = await db.select().from(auditEvents).where(eq(auditEvents.action, 'invoice.paid'))
+    expect(audit).toEqual([
+      expect.objectContaining({ actorUserId: shop.mike.id, entityId: job.id }),
+    ])
+
+    const sent = await db.select().from(messages).orderBy(messages.channel)
+    expect(sent).toEqual([
+      expect.objectContaining({
+        channel: 'email',
+        contact: 'maria@example.com',
+        kind: 'invoice',
+        subject: 'Your receipt from desert HVAC (#1)',
+        status: 'queued',
+      }),
+      expect.objectContaining({
+        channel: 'sms',
+        kind: 'invoice',
+        body: 'desert HVAC: thank you! We received your payment of $89.00. Receipt #1.',
+        status: 'queued',
+      }),
+    ])
+    expect(sent[0].body).toContain('AC repair (diagnostic fee): $89.00')
+  })
+
+  it('numbers each contractor’s invoices 1, 2, 3', async () => {
+    const { shop, job, cookie } = await visitToPay()
+    const second = await createJob(shop, {
+      technicianId: shop.mike.id,
+      status: 'in_progress',
+      at: `${phoenixDay(0)} 12:00`,
+    })
+    await addBookedLines(shop.tenant.id, second.id, db)
+
+    await act(cookie, job.id, 'complete', { paidInPerson: true }).expect(200)
+    await act(cookie, second.id, 'complete', { paidInPerson: true }).expect(200)
+
+    const numbers = await db.select().from(invoices).orderBy(invoices.number)
+    expect(numbers.map((invoice) => [invoice.jobId, invoice.number])).toEqual([
+      [job.id, 1],
+      [second.id, 2],
+    ])
+  })
+
+  it('asks for a review once the job is done, when the contractor set a review link', async () => {
+    const { shop, job, cookie } = await visitToPay()
+    await db
+      .update(tenants)
+      .set({ reviewUrl: 'https://g.page/r/desert/review' })
+      .where(eq(tenants.id, shop.tenant.id))
+
+    await act(cookie, job.id, 'complete', { paidInPerson: true }).expect(200)
+
+    const reviews = await db.select().from(messages).where(eq(messages.kind, 'review_request'))
+    expect(reviews.map((message) => message.channel).sort()).toEqual(['email', 'sms'])
+    expect(reviews.find((message) => message.channel === 'sms')!.body).toBe(
+      'desert HVAC: thanks for having us. How did we do? Leave a review: https://g.page/r/desert/review Reply STOP to opt out.',
     )
   })
 })

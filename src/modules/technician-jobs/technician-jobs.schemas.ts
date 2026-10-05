@@ -15,6 +15,11 @@ export const RunningLateInput = z.object({
   minutes: z.literal(LATE_MINUTES, 'Pick how far away you are'),
 })
 
+// The technician ticked that the homeowner paid in person (cash or check).
+export const CompleteInput = z.object({
+  paidInPerson: z.boolean('Say whether the homeowner paid').default(false),
+})
+
 export const NoAccessInput = z.object({
   note: z.string().trim().max(1000, 'Keep the note under 1,000 characters').default(''),
 })

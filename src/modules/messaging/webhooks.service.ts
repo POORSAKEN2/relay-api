@@ -88,7 +88,7 @@ async function receiveText(event: HttpSmsEvent, tx: Tx) {
   if (!found?.contact) return
   const { tenantId, contact } = found
   const body = event.data.content ?? ''
-  const message = await queries.insertText(
+  const message = await queries.insertMessage(
     {
       tenantId,
       channel: 'sms',
