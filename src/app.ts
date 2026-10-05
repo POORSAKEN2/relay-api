@@ -8,6 +8,7 @@ import { logger } from './lib/logger.ts'
 import { checkOrigin } from './lib/origins.ts'
 import { errorHandler } from './middleware/error-handler.ts'
 import { accountsRoutes } from './modules/accounts/accounts.routes.ts'
+import { analyticsRoutes } from './modules/analytics/analytics.routes.ts'
 import { billingRoutes } from './modules/billing/billing.routes.ts'
 import { bookingRoutes } from './modules/booking/booking.routes.ts'
 import { brandingRoutes } from './modules/branding/branding.routes.ts'
@@ -51,6 +52,7 @@ export function createApp() {
   })
   app.use(
     '/api',
+    analyticsRoutes,
     accountsRoutes,
     billingRoutes,
     brandingRoutes,
