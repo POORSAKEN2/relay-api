@@ -3,6 +3,7 @@ import type { jobs } from '../../db/schema.ts'
 import { HttpError } from '../../lib/http-error.ts'
 import { formatDay, formatTime, formatWindow, statusLabel, weekdayOf } from '../../lib/labels.ts'
 import { tenantUrl } from '../../lib/tenant-url.ts'
+import { hashToken, newToken } from '../../lib/tokens.ts'
 import { emitToTenant } from '../../realtime/index.ts'
 import type { SessionUser } from '../accounts/accounts.service.ts'
 import * as audit from '../audit/audit.queries.ts'
@@ -10,6 +11,7 @@ import { reserveWindow, tenantOf } from '../booking/booking.service.ts'
 import * as charges from '../charges/charges.service.ts'
 import { sendReviewRequest } from '../homeowner-messages/homeowner-messages.service.ts'
 import { sendText } from '../messaging/sms.ts'
+import { type AssignmentChange, assignmentText } from './assignment-text.ts'
 import * as queries from './dispatch.queries.ts'
 import type { SettableStatus, SlotInput } from './dispatch.schemas.ts'
 
@@ -156,11 +158,19 @@ export async function moveJob(user: SessionUser, jobId: string, input: SlotInput
     const reassigned = input.technicianId !== job.technicianId
     if (sameSlot && !reassigned) return { changed: false, dates: [job.date] }
 
+    // Told before the update, so the text names the time they knew.
+    if (reassigned && job.technicianId) {
+      await textTechnician(tenantId, job.id, job.technicianId, 'removed', null, tx)
+    }
+    // A new link with every text: only its hash is kept, so an older text's link stops working.
+    const linkToken = input.technicianId ? newToken(16) : null
+
     await queries.updateJob(
       tenantId,
       job.id,
       {
         technicianId: input.technicianId,
+        techLinkHash: linkToken ? hashToken(linkToken) : null,
         ...slot,
         // A new time or technician makes the old arrival time meaningless.
         etaAt: null,
@@ -201,13 +211,8 @@ export async function moveJob(user: SessionUser, jobId: string, input: SlotInput
     }
     // The technician hears about it even with the app closed.
     if (input.technicianId) {
-      await textTechnician(
-        tenantId,
-        job.id,
-        input.technicianId,
-        reassigned ? 'assigned' : 'changed',
-        tx,
-      )
+      const change = reassigned ? 'assigned' : 'changed'
+      await textTechnician(tenantId, job.id, input.technicianId, change, linkToken, tx)
     }
     return { changed: true, dates: [...new Set([job.date, input.date])] }
   })
@@ -216,27 +221,27 @@ export async function moveJob(user: SessionUser, jobId: string, input: SlotInput
   return { jobId, dates: result.dates }
 }
 
-// Saves a text to the technician with a link to the job page, in the caller's transaction. The
-// page needs the technician signed in; the sign-in page sends them on to the job afterwards.
-// A technician without a phone gets none; the change stands.
+// Saves a text to the technician with an expiring link to the job, in the caller's transaction.
+// The link opens /j/:token, which needs the technician signed in; the sign-in page sends
+// them on to the job afterwards. A technician without a phone gets nothing and the change stands.
 async function textTechnician(
   tenantId: string,
   jobId: string,
   technicianId: string,
-  what: 'assigned' | 'changed',
+  change: AssignmentChange,
+  linkToken: string | null,
   tx: Tx,
 ) {
   const job = await queries.findAssignmentText(tenantId, jobId, technicianId, tx)
   if (!job?.technicianPhone) return
-  const headline = what === 'assigned' ? 'New job' : 'Job changed'
-  // A plain hyphen: an en dash would make the SMS cost 70 characters instead of 160.
-  const when = `${formatDay(job.date)}, ${formatWindow(job.localStart, job.localEnd).replace('–', '-')}`
+  const link = linkToken ? tenantUrl(job.tenant, `/j/${linkToken}`) : null
+  const body = assignmentText(change, job, link)
   await sendText(
     tenantId,
     {
       contact: job.technicianPhone,
       kind: 'job_assigned',
-      body: `${job.contractorName}: ${headline}. ${job.serviceName} in ${job.city}, ${when}. ${tenantUrl(job.tenant, `/jobs/${jobId}`)}`,
+      body,
       toUserId: technicianId,
       jobId,
     },
