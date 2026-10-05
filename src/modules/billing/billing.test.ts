@@ -2,11 +2,20 @@ import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import request from 'supertest'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { createShop, createTenant, createUser, resetDb, signIn } from '../../../test/helpers.ts'
+import {
+  createJob,
+  createShop,
+  createTenant,
+  createUser,
+  resetDb,
+  type Shop,
+  signIn,
+} from '../../../test/helpers.ts'
 import { createApp } from '../../app.ts'
 import { env } from '../../config/env.ts'
 import { db } from '../../db/client.ts'
-import { tenants } from '../../db/schema.ts'
+import { auditEvents, subscriptionInvoices, tenants } from '../../db/schema.ts'
+import { createMonthlyInvoices } from './billing.service.ts'
 
 const app = createApp()
 const AUTH = 'test-revenuecat-webhook-auth'
@@ -148,5 +157,168 @@ describe('GET /api/billing', () => {
     await request(app).get('/api/billing').expect(401)
     const shop = await createShop('desert')
     await request(app).get('/api/billing').set('Cookie', shop.cookie).expect(403) // office
+  })
+})
+
+describe('createMonthlyInvoices', () => {
+  // 12:00 UTC on 1 October is 05:00 in Phoenix (UTC-7): September has ended there.
+  const OCTOBER_1 = new Date('2026-10-01T12:00:00Z')
+  const phoenix = (local: string) => new Date(`${local}-07:00`)
+
+  async function shopWithFee(perJobFeeCents: number) {
+    const shop = await createShop('desert')
+    await db.update(tenants).set({ perJobFeeCents }).where(eq(tenants.id, shop.tenant.id))
+    return shop
+  }
+
+  async function invoicesOf(tenantId: string) {
+    return db.select().from(subscriptionInvoices).where(eq(subscriptionInvoices.tenantId, tenantId))
+  }
+
+  it('bills the recovered jobs booked last month in the contractor’s time zone', async () => {
+    const shop = await shopWithFee(1500)
+    // Counted: recovered sources, booked in Phoenix's September.
+    await createJob(shop, { source: 'text_back', bookedAt: phoenix('2026-09-10T09:00') })
+    await createJob(shop, { source: 'ai', bookedAt: phoenix('2026-09-30T23:00') }) // October in UTC
+    await createJob(shop, {
+      source: 'recovery_text',
+      status: 'done',
+      technicianId: shop.mike.id,
+      bookedAt: phoenix('2026-09-01T00:00'),
+    })
+    // Not counted.
+    await createJob(shop, { source: 'recovery_text', bookedAt: phoenix('2026-10-01T00:30') })
+    await createJob(shop, { source: 'recovery_text', bookedAt: phoenix('2026-08-31T23:30') })
+    await createJob(shop, { source: 'web', bookedAt: phoenix('2026-09-10T09:00') })
+    await createJob(shop, {
+      source: 'text_back',
+      status: 'cancelled',
+      bookedAt: phoenix('2026-09-10T09:00'),
+    })
+    await createJob(shop, {
+      source: 'ai',
+      status: 'held',
+      holdExpiresAt: phoenix('2026-09-10T09:15'),
+      bookedAt: null,
+    })
+
+    expect(await createMonthlyInvoices(OCTOBER_1)).toBe(1)
+
+    const [invoice] = await invoicesOf(shop.tenant.id)
+    expect(invoice).toMatchObject({
+      periodStart: '2026-09-01',
+      periodEnd: '2026-10-01',
+      monthlyFeeCents: 0,
+      recoveredJobs: 3,
+      perJobFeeCents: 1500,
+      totalCents: 4500,
+      status: 'open',
+      paidAt: null,
+    })
+  })
+
+  it('makes each month’s invoice once, and keeps its fee when the fee changes', async () => {
+    const shop = await shopWithFee(1500)
+    await createJob(shop, { source: 'ai', bookedAt: phoenix('2026-09-10T09:00') })
+    await createMonthlyInvoices(OCTOBER_1)
+    await db.update(tenants).set({ perJobFeeCents: 9900 }).where(eq(tenants.id, shop.tenant.id))
+
+    expect(await createMonthlyInvoices(new Date('2026-10-02T12:00:00Z'))).toBe(0)
+
+    const invoices = await invoicesOf(shop.tenant.id)
+    expect(invoices).toHaveLength(1)
+    expect(invoices[0].totalCents).toBe(1500)
+  })
+
+  it('waits until the month has ended in the contractor’s time zone', async () => {
+    const shop = await shopWithFee(1500)
+    await createJob(shop, { source: 'ai', bookedAt: phoenix('2026-09-10T09:00') })
+
+    // 05:00 UTC on 1 October is still 30 September in Phoenix.
+    expect(await createMonthlyInvoices(new Date('2026-10-01T05:00:00Z'))).toBe(0)
+    expect(await invoicesOf(shop.tenant.id)).toEqual([])
+  })
+
+  it('makes no invoice without a fee or without recovered jobs', async () => {
+    const shop = await shopWithFee(0)
+    await createJob(shop, { source: 'ai', bookedAt: phoenix('2026-09-10T09:00') })
+    const other = await createTenant('cool')
+    await db.update(tenants).set({ perJobFeeCents: 1500 }).where(eq(tenants.id, other.id))
+
+    expect(await createMonthlyInvoices(OCTOBER_1)).toBe(0)
+  })
+})
+
+describe('recovered-job invoices over HTTP', () => {
+  async function setUp() {
+    const shop = await createShop('desert')
+    const owner = await createUser('owner', shop.tenant.id)
+    const admin = await createUser('superadmin', null)
+    return { shop, owner: await signIn(owner.email), admin: await signIn(admin.email) }
+  }
+
+  async function invoiceFor(shop: Shop) {
+    await createJob(shop, { source: 'ai', bookedAt: new Date('2026-09-10T16:00:00Z') })
+    await createMonthlyInvoices(new Date('2026-10-01T12:00:00Z'))
+    const [invoice] = await db.select().from(subscriptionInvoices)
+    return invoice
+  }
+
+  it('lets the superadmin set the fee, then mark the invoice paid; the owner sees it', async () => {
+    const { shop, owner, admin } = await setUp()
+    const fee = `/api/admin/tenants/${shop.tenant.id}/per-job-fee`
+
+    await request(app).put(fee).set('Cookie', admin).send({ perJobFeeCents: 2500 }).expect(200)
+    const invoice = await invoiceFor(shop)
+
+    const billing = await request(app)
+      .get(`/api/admin/tenants/${shop.tenant.id}/billing`)
+      .set('Cookie', admin)
+      .expect(200)
+    expect(billing.body.perJobFeeCents).toBe(2500)
+    expect(billing.body.invoices).toMatchObject([{ id: invoice.id, totalCents: 2500 }])
+
+    const paid = await request(app)
+      .post(`/api/admin/invoices/${invoice.id}/paid`)
+      .set('Cookie', admin)
+      .expect(200)
+    expect(paid.body.invoice).toMatchObject({ status: 'paid', totalCents: 2500 })
+    await request(app)
+      .post(`/api/admin/invoices/${invoice.id}/paid`)
+      .set('Cookie', admin)
+      .expect(404)
+
+    const mine = await request(app).get('/api/billing/invoices').set('Cookie', owner).expect(200)
+    expect(mine.body.invoices).toMatchObject([
+      { periodStart: '2026-09-01', recoveredJobs: 1, totalCents: 2500, status: 'paid' },
+    ])
+
+    const actions = await db
+      .select({ action: auditEvents.action })
+      .from(auditEvents)
+      .where(eq(auditEvents.tenantId, shop.tenant.id))
+    expect(actions.map((a) => a.action).sort()).toEqual([
+      'billing.invoice_paid',
+      'billing.per_job_fee_changed',
+    ])
+  })
+
+  it('refuses a fee that is not whole cents', async () => {
+    const { shop, admin } = await setUp()
+    await request(app)
+      .put(`/api/admin/tenants/${shop.tenant.id}/per-job-fee`)
+      .set('Cookie', admin)
+      .send({ perJobFeeCents: 12.5 })
+      .expect(400)
+  })
+
+  it('keeps the admin routes for the superadmin, and invoices to the owner', async () => {
+    const { shop, owner } = await setUp()
+    await request(app)
+      .put(`/api/admin/tenants/${shop.tenant.id}/per-job-fee`)
+      .set('Cookie', owner)
+      .send({ perJobFeeCents: 0 })
+      .expect(403)
+    await request(app).get('/api/billing/invoices').set('Cookie', shop.cookie).expect(403) // office
   })
 })

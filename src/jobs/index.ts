@@ -3,6 +3,7 @@ import { PgBoss } from 'pg-boss'
 import { env } from '../config/env.ts'
 import { logger } from '../lib/logger.ts'
 import * as accounts from '../modules/accounts/accounts.service.ts'
+import * as billing from '../modules/billing/billing.service.ts'
 import * as onlineBooking from '../modules/online-booking/online-booking.service.ts'
 
 const boss = new PgBoss(env.DATABASE_URL)
@@ -30,6 +31,13 @@ export async function startJobs() {
   await register('booking-recovery', { cron: '*/5 * * * *' }, async () => {
     const texted = await onlineBooking.sendRecoveryTexts()
     if (texted > 0) logger.info({ texted }, 'Booking recovery texts saved')
+  })
+
+  // Daily: once a contractor's month has ended in its time zone, invoice its recovered jobs.
+  // 12:00 UTC is past midnight on the 1st everywhere in the US.
+  await register('recovered-job-invoices', { cron: '0 12 * * *' }, async () => {
+    const created = await billing.createMonthlyInvoices()
+    if (created > 0) logger.info({ created }, 'Recovered-job invoices made')
   })
 
   // Daily: photos on bookings nobody finished go 30 days after the homeowner's last activity.
