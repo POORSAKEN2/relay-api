@@ -147,6 +147,10 @@ The API tests run against `relay_test` and set up its tables themselves.
 
 The demo sends texts from an Android phone with a Philippine SIM, through [httpSMS](https://httpsms.com). Step-by-step setup, the rules Relay applies, and what to check when a text doesn't arrive: [docs/httpsms-setup.md](docs/httpsms-setup.md).
 
+## Phone calls with Telnyx
+
+Calls to the contractor's number come in through [Telnyx](https://telnyx.com). Account, number, webhook and what to check when a call doesn't come through: [docs/telnyx-setup.md](docs/telnyx-setup.md).
+
 ## Real emails with Gmail
 
 Invite emails go through Gmail's SMTP server. Setup and troubleshooting: [docs/gmail-smtp-setup.md](docs/gmail-smtp-setup.md).

@@ -26,6 +26,10 @@ const EnvSchema = z
     SMTP_PASSWORD: z.string().min(1).optional(),
     // The From header, for example 'Relay <you@gmail.com>'. Gmail rewrites it to SMTP_USER.
     EMAIL_FROM: z.string().min(1).optional(),
+    // Phone calls (Telnyx). The API key sends call commands; the public key (base64, from the
+    // Telnyx portal) checks that webhooks really come from Telnyx.
+    TELNYX_API_KEY: z.string().min(1).optional(),
+    TELNYX_PUBLIC_KEY: z.string().min(1).optional(),
     // The Authorization header value typed when the webhook was created in RevenueCat.
     REVENUECAT_WEBHOOK_AUTH: z.string().min(16).optional(),
     // db:seed only: the demo phone's number, E.164 ('+639171234567').
