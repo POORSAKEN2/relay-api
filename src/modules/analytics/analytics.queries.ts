@@ -64,3 +64,31 @@ export async function sumRecoveredJobs(
     .where(recoveredJobsBookedIn(tenantId, timezone, start, end))
   return row
 }
+
+// Like sumRecoveredJobs, per local week of booked_at: the week's Monday as '2026-07-20'.
+// Weeks with no recovered job have no row.
+export function sumRecoveredJobsByWeek(
+  tenantId: string,
+  timezone: string,
+  start: string,
+  end: string,
+) {
+  return (
+    db
+      .select({
+        // date_trunc('week', …) starts weeks on Monday.
+        weekStart: sql<string>`to_char(date_trunc('week', ${jobs.bookedAt} at time zone ${timezone}), 'YYYY-MM-DD')`,
+        jobs: count(jobs.id),
+        revenueCents:
+          sql<number>`coalesce(sum(${invoices.totalCents}) filter (where ${invoices.status} = 'paid'), 0)`.mapWith(
+            Number,
+          ),
+      })
+      .from(jobs)
+      .leftJoin(invoices, and(eq(invoices.tenantId, jobs.tenantId), eq(invoices.jobId, jobs.id)))
+      .where(recoveredJobsBookedIn(tenantId, timezone, start, end))
+      // By the first column: repeating the week expression would send the time zone as a second
+      // parameter, and Postgres can't tell the two are the same.
+      .groupBy(sql`1`)
+  )
+}
