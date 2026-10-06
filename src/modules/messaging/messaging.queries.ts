@@ -45,7 +45,7 @@ export async function findQuietHours(tenantId: string, tx: Db = db) {
 }
 
 export async function insertMessage(values: typeof messages.$inferInsert, tx: Db = db) {
-  const [message] = await tx.insert(messages).values(values).returning({ id: messages.id })
+  const [message] = await tx.insert(messages).values(values).returning()
   return message
 }
 
