@@ -14,7 +14,8 @@
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node --env-file-if-exists=.env src/db/migrate.ts",
-    "db:seed": "node --env-file-if-exists=.env src/db/seed.ts"
+    "db:seed": "node --env-file-if-exists=.env src/db/seed.ts",
+    "receptionist:scenarios": "node --env-file-if-exists=.env scripts/receptionist-scenarios.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
