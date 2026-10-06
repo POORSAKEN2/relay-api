@@ -45,7 +45,7 @@ export async function findQuietHours(tenantId: string, tx: Db = db) {
 }
 
 export async function insertMessage(values: typeof messages.$inferInsert, tx: Db = db) {
-  const [message] = await tx.insert(messages).values(values).returning({ id: messages.id })
+  const [message] = await tx.insert(messages).values(values).returning()
   return message
 }
 
@@ -218,13 +218,16 @@ export async function blockWaitingTexts(
     )
 }
 
+// The new call's id, or undefined when the call was already saved (a repeated webhook).
 export async function insertMissedCall(
   tenantId: string,
   values: Omit<typeof calls.$inferInsert, 'tenantId'>,
   tx: Db,
 ) {
-  await tx
+  const [call] = await tx
     .insert(calls)
     .values({ tenantId, ...values })
     .onConflictDoNothing()
+    .returning({ id: calls.id })
+  return call?.id
 }

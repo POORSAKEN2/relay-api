@@ -17,6 +17,11 @@ it('fills in defaults', () => {
     EMAIL_PROVIDER: 'log',
     SMTP_HOST: 'smtp.gmail.com',
     SMTP_PORT: 465,
+    LLM_PROVIDER: 'off',
+    GROQ_MODEL: 'openai/gpt-oss-20b',
+    ANTHROPIC_MODEL: 'claude-haiku-4-5',
+    LLM_TIMEOUT_MS: 8000,
+    RECEPTIONIST_TEST_CONSOLE: false,
   })
 })
 
@@ -55,4 +60,13 @@ it('needs the Gmail login and sender to send real emails', () => {
     EMAIL_FROM: 'a@gmail.com',
   }
   expect(parseEnv({ ...required, EMAIL_PROVIDER: 'smtp', ...login }).EMAIL_PROVIDER).toBe('smtp')
+})
+
+it('needs the chosen language model provider’s key', () => {
+  expect(() => parseEnv({ ...required, LLM_PROVIDER: 'groq' })).toThrow(/GROQ_API_KEY/)
+  expect(() => parseEnv({ ...required, LLM_PROVIDER: 'anthropic' })).toThrow(/ANTHROPIC_API_KEY/)
+  expect(parseEnv({ ...required, LLM_PROVIDER: 'groq', GROQ_API_KEY: 'k' }).LLM_PROVIDER).toBe(
+    'groq',
+  )
+  expect(() => parseEnv({ ...required, LLM_PROVIDER: 'openai' })).toThrow(/LLM_PROVIDER/)
 })

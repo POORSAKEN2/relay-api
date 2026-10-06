@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import request from 'supertest'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createJob,
   createShop,
@@ -312,5 +312,87 @@ describe('GET /api/analytics/recovery', () => {
       jobsBooked: 0,
       revenueCents: 0,
     })
+  })
+})
+
+describe('GET /api/analytics/recovery/weekly', () => {
+  function getWeekly(cookie?: string, query: Record<string, string> = {}) {
+    const req = request(app).get('/api/analytics/recovery/weekly').query(query)
+    return cookie ? req.set('Cookie', cookie) : req
+  }
+
+  // Wednesday Oct 7, 2026, 11 AM in Phoenix: this week started Monday Oct 5. Only Date is
+  // faked, so the database and the HTTP server keep their real timers.
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+  function todayIsOct7() {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-07T18:00:00Z'))
+  }
+
+  it('gives 12 weeks oldest first, ending with this week, empty weeks as zeros', async () => {
+    const shop = await createShop('desert')
+    const cookie = await owner(shop)
+    todayIsOct7()
+
+    const res = await getWeekly(cookie).expect(200)
+
+    expect(res.body.weeks).toHaveLength(12)
+    expect(res.body.weeks[0]).toEqual({ weekStart: '2026-07-20', jobsBooked: 0, revenueCents: 0 })
+    expect(res.body.weeks[11]).toEqual({ weekStart: '2026-10-05', jobsBooked: 0, revenueCents: 0 })
+  })
+
+  it('puts a job in the local week it was booked, with its paid revenue', async () => {
+    const shop = await createShop('desert')
+    const cookie = await owner(shop)
+    // Sunday 23:30 in Phoenix is already Monday in UTC: it still belongs to the week before.
+    const sunday = await createJob(shop, {
+      source: 'text_back',
+      bookedAt: phoenix('2026-10-04T23:30:00'),
+    })
+    await createInvoice(shop, sunday.id, 'paid', 15000)
+    const monday = await createJob(shop, { source: 'ai', bookedAt: phoenix('2026-10-05T08:00:00') })
+    await createInvoice(shop, monday.id, 'open', 9000) // not paid yet: $0
+    // Not recovered, cancelled, or before the 12 weeks: never counted.
+    await createJob(shop, { source: 'web', bookedAt: phoenix('2026-10-05T09:00:00') })
+    await createJob(shop, {
+      source: 'ai',
+      status: 'cancelled',
+      bookedAt: phoenix('2026-10-05T09:00:00'),
+    })
+    await createJob(shop, { source: 'ai', bookedAt: phoenix('2026-07-19T12:00:00') })
+    todayIsOct7()
+
+    const res = await getWeekly(cookie).expect(200)
+
+    const byWeek = Object.fromEntries(
+      res.body.weeks.map((week: { weekStart: string }) => [week.weekStart, week]),
+    )
+    expect(byWeek['2026-09-28']).toMatchObject({ jobsBooked: 1, revenueCents: 15000 })
+    expect(byWeek['2026-10-05']).toMatchObject({ jobsBooked: 1, revenueCents: 0 })
+    const total = res.body.weeks.reduce(
+      (sum: number, week: { jobsBooked: number }) => sum + week.jobsBooked,
+      0,
+    )
+    expect(total).toBe(2)
+  })
+
+  it('takes a number of weeks from 1 to 26', async () => {
+    const shop = await createShop('desert')
+    const cookie = await owner(shop)
+    todayIsOct7()
+
+    const res = await getWeekly(cookie, { weeks: '1' }).expect(200)
+    expect(res.body.weeks).toEqual([{ weekStart: '2026-10-05', jobsBooked: 0, revenueCents: 0 }])
+    await getWeekly(cookie, { weeks: '26' }).expect(200)
+    await getWeekly(cookie, { weeks: '0' }).expect(400)
+    await getWeekly(cookie, { weeks: '27' }).expect(400)
+  })
+
+  it('is for the owner only', async () => {
+    await getWeekly().expect(401)
+    const shop = await createShop('desert')
+    await getWeekly(shop.cookie).expect(403)
   })
 })

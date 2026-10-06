@@ -9,3 +9,9 @@ export const RecoveryQuery = z
     path: ['to'],
   })
 export type RecoveryQuery = z.infer<typeof RecoveryQuery>
+
+// How many weeks of the chart, the current week last.
+export const WeeklyQuery = z.object({
+  weeks: z.coerce.number().int().min(1).max(26).default(12),
+})
+export type WeeklyQuery = z.infer<typeof WeeklyQuery>

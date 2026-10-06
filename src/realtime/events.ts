@@ -16,4 +16,8 @@ export type RealtimeEvents = {
   'team.updated': { tenantId: string }
   // A service was added, edited, archived, restored or moved in the list.
   'services.updated': { tenantId: string }
+  // A homeowner texted in: the inbox refreshes that thread and the unread count.
+  'inbox.updated': { contact: string }
+  // The AI or a text-back handled a call: the recovered-revenue numbers change.
+  'call.handled': { callId: string }
 }

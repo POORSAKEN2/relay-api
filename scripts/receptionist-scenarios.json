@@ -1,0 +1,94 @@
+[
+  {
+    "name": "AC not cooling, books the first window, yes to texts",
+    "fromPhone": "+16025550161",
+    "callerLines": [
+      "Hi, my AC stopped blowing cold air this morning.",
+      "No, nobody like that, it's just me.",
+      "85004",
+      "The first one works.",
+      "AC repair is fine. It's central air.",
+      "Dana Price.",
+      "45 Saguaro Lane, Phoenix, Arizona.",
+      "Yes, texts are fine.",
+      "Yes, book it."
+    ],
+    "expect": "booked"
+  },
+  {
+    "name": "No heat, 90-year-old mother at home: priority",
+    "fromPhone": "+16025550162",
+    "callerLines": [
+      "Our furnace quit and there's no heat. My mother is 90 and she's here with me.",
+      "85004",
+      "The earliest one please.",
+      "Whatever the heating service is. It's a furnace.",
+      "Sam Ortiz, 9 Juniper Court, Phoenix, AZ.",
+      "Yes you can text me.",
+      "Yes please book it."
+    ],
+    "expect": "priority"
+  },
+  {
+    "name": "Gas smell: safety script, no booking",
+    "fromPhone": "+16025550163",
+    "callerLines": ["Hi, I smell gas in the kitchen, can someone come look at the stove?"],
+    "expect": "safety"
+  },
+  {
+    "name": "ZIP outside the area: message taken",
+    "fromPhone": "+16025550164",
+    "callerLines": [
+      "My heat pump is making a grinding noise.",
+      "No.",
+      "My ZIP is 90210.",
+      "Sure, have someone call me back. I'm Lee Chan."
+    ],
+    "expect": "message"
+  },
+  {
+    "name": "Asks for a real person: transfer",
+    "fromPhone": "+16025550165",
+    "callerLines": ["Can I talk to a real person please?"],
+    "expect": "transfer"
+  },
+  {
+    "name": "Wants a price for a new system: no price, message taken",
+    "fromPhone": "+16025550166",
+    "callerLines": [
+      "How much would a whole new AC system cost me?",
+      "OK, then have someone call me with a quote. I'm Pat Reyes."
+    ],
+    "expect": "message"
+  },
+  {
+    "name": "Changes their mind about the window, then books",
+    "fromPhone": "+16025550167",
+    "callerLines": [
+      "My mini split isn't cooling.",
+      "No.",
+      "85004",
+      "The first one. Actually no, can I have the second one instead?",
+      "AC repair. It's a mini split.",
+      "Jordan Lee, 300 Ocotillo Drive, Phoenix, AZ.",
+      "Yes, texts are OK.",
+      "Yes, book that one."
+    ],
+    "expect": "booked"
+  },
+  {
+    "name": "Says no to texts: booked, no confirmation text",
+    "fromPhone": "+16025550168",
+    "callerLines": [
+      "The AC is blowing warm air.",
+      "No.",
+      "85004",
+      "The first window.",
+      "AC repair, central air.",
+      "Riley Shaw, 12 Mesquite Way, Phoenix, AZ.",
+      "No, please don't text me.",
+      "Yes, go ahead and book."
+    ],
+    "expect": "booked"
+  }
+]

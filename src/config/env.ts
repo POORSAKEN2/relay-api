@@ -30,6 +30,18 @@ const EnvSchema = z
     // Telnyx portal) checks that webhooks really come from Telnyx.
     TELNYX_API_KEY: z.string().min(1).optional(),
     TELNYX_PUBLIC_KEY: z.string().min(1).optional(),
+    // The language model behind the AI receptionist. 'off' answers nothing: every call takes
+    // a message instead. 'groq' and 'anthropic' need their key.
+    LLM_PROVIDER: z.enum(['off', 'groq', 'anthropic']).default('off'),
+    GROQ_API_KEY: z.string().min(1).optional(),
+    GROQ_MODEL: z.string().min(1).default('openai/gpt-oss-20b'),
+    ANTHROPIC_API_KEY: z.string().min(1).optional(),
+    ANTHROPIC_MODEL: z.string().min(1).default('claude-haiku-4-5'),
+    // A caller hears silence while the model thinks: give up after this long.
+    LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(8000),
+    // 'true' opens the receptionist test console: a pretend call from the browser. Its
+    // bookings are real jobs, so it stays off in production except for a demo.
+    RECEPTIONIST_TEST_CONSOLE: z.stringbool().default(false),
     // The Authorization header value typed when the webhook was created in RevenueCat.
     REVENUECAT_WEBHOOK_AUTH: z.string().min(16).optional(),
     // db:seed only: the demo phone's number, E.164 ('+639171234567').
@@ -48,6 +60,20 @@ const EnvSchema = z
             message: 'Required with SMS_PROVIDER=httpsms',
           })
       }
+    }
+    if (env.LLM_PROVIDER === 'groq' && !env.GROQ_API_KEY) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['GROQ_API_KEY'],
+        message: 'Required with LLM_PROVIDER=groq',
+      })
+    }
+    if (env.LLM_PROVIDER === 'anthropic' && !env.ANTHROPIC_API_KEY) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['ANTHROPIC_API_KEY'],
+        message: 'Required with LLM_PROVIDER=anthropic',
+      })
     }
     if (env.EMAIL_PROVIDER === 'smtp') {
       for (const name of ['SMTP_USER', 'SMTP_PASSWORD', 'EMAIL_FROM'] as const) {

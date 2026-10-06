@@ -8,7 +8,8 @@ import { deliver } from './sender.ts'
 // Every text Relay sends starts here. It applies the rules (consent, quiet hours) and saves the
 // text in the caller's transaction, so the change and its text are saved together or not at
 // all. It never calls the network: the sender loop (sender.ts) sends saved texts a few seconds
-// later. The one exception is a sign-in code, sent right away (see below).
+// later. The one exception is a sign-in code, sent right away (see below). Returns the saved
+// row, which says whether the text was blocked.
 export async function sendText(
   tenantId: string,
   text: {
@@ -18,6 +19,8 @@ export async function sendText(
     toUserId?: string // the staff member or technician it goes to
     jobId?: string // the job it is about
     customerId?: string // the homeowner it goes to
+    callId?: string // the missed call a text-back answers
+    sentByUserId?: string // office reply typed in the inbox
   },
   tx: Db = db,
 ) {
@@ -47,6 +50,7 @@ export async function sendText(
   if (isCode && !blockedReason) {
     await deliver({ id: message.id, tenantId, contact: text.contact, body: text.body }, true)
   }
+  return message
 }
 
 // Why the homeowner can't be texted, or null if they can. An opt-out (STOP) always wins.
