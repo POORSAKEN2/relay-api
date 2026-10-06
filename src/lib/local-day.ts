@@ -12,6 +12,17 @@ export function localToday(timezone: string, now = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(now)
 }
 
+// The wall-clock time right now in a time zone, as '14:05:00'.
+export function localTime(timezone: string, now = new Date()) {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: timezone,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).format(now)
+}
+
 // '2026-10-31' + 1 → '2026-11-01'; a negative n goes back. `addDays(last, 1)` turns an
 // inclusive last day into an exclusive end.
 export function addDays(day: string, n: number) {

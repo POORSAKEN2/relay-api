@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { addDays, localToday, mondayOf } from './local-day.ts'
+import { addDays, localTime, localToday, mondayOf } from './local-day.ts'
 
 it('advances a normal day to tomorrow', () => {
   expect(addDays('2026-10-06', 1)).toBe('2026-10-07')
@@ -38,4 +38,10 @@ it('gives the local date in a time zone', () => {
   const now = new Date('2026-10-07T03:00:00Z')
   expect(localToday('America/Phoenix', now)).toBe('2026-10-06')
   expect(localToday('Asia/Manila', now)).toBe('2026-10-07')
+})
+
+it('gives the wall-clock time in a time zone', () => {
+  const now = new Date('2026-10-07T03:05:09Z')
+  expect(localTime('America/Phoenix', now)).toBe('20:05:09')
+  expect(localTime('Asia/Manila', now)).toBe('11:05:09')
 })
