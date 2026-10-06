@@ -21,6 +21,7 @@ it('fills in defaults', () => {
     GROQ_MODEL: 'openai/gpt-oss-20b',
     ANTHROPIC_MODEL: 'claude-haiku-4-5',
     LLM_TIMEOUT_MS: 8000,
+    RECEPTIONIST_TEST_CONSOLE: false,
   })
 })
 

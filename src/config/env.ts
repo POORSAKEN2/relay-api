@@ -39,6 +39,9 @@ const EnvSchema = z
     ANTHROPIC_MODEL: z.string().min(1).default('claude-haiku-4-5'),
     // A caller hears silence while the model thinks: give up after this long.
     LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(8000),
+    // 'true' opens the receptionist test console: a pretend call from the browser. Its
+    // bookings are real jobs, so it stays off in production except for a demo.
+    RECEPTIONIST_TEST_CONSOLE: z.stringbool().default(false),
     // The Authorization header value typed when the webhook was created in RevenueCat.
     REVENUECAT_WEBHOOK_AUTH: z.string().min(16).optional(),
     // db:seed only: the demo phone's number, E.164 ('+639171234567').

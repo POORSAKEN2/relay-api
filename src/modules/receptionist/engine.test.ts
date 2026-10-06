@@ -125,12 +125,20 @@ describe('handleTurn', () => {
     )
 
     const first = await handleTurn(callId, 'No heat, and my mother is 90. ZIP 85004.')
-    expect(first).toEqual({
+    expect(first).toMatchObject({
       say: 'I can come Tuesday between 8 AM and noon. Does that work?',
       action: null,
     })
     const second = await handleTurn(callId, 'Yes please, and yes to texts.')
     expect(second.say).toBe('You’re booked. Anything else?')
+    expect(second.events).toEqual([
+      expect.objectContaining({
+        type: 'tool',
+        name: 'book_visit',
+        ok: true,
+        job: expect.any(Object),
+      }),
+    ])
 
     const [job] = await db.select().from(jobs).where(eq(jobs.callId, callId))
     expect(job).toMatchObject({ source: 'ai', priority: true, vulnerableOccupant: true })
@@ -159,7 +167,11 @@ describe('handleTurn', () => {
 
     const reply = await handleTurn(callId, 'I smell gas in the kitchen')
 
-    expect(reply).toEqual({ say: SAFETY_SCRIPT, action: { type: 'transfer', to: ON_CALL } })
+    expect(reply).toEqual({
+      say: SAFETY_SCRIPT,
+      action: { type: 'transfer', to: ON_CALL },
+      events: [{ type: 'safety' }],
+    })
     expect(chat).not.toHaveBeenCalled()
     expect(await callRow(callId)).toMatchObject({
       safetyFlag: true,
@@ -176,7 +188,7 @@ describe('handleTurn', () => {
 
     const reply = await handleTurn(callId, 'Our carbon monoxide alarm is going off')
 
-    expect(reply).toEqual({ say: SAFETY_SCRIPT_NO_TRANSFER, action: { type: 'hang_up' } })
+    expect(reply).toMatchObject({ say: SAFETY_SCRIPT_NO_TRANSFER, action: { type: 'hang_up' } })
   })
 
   it('takes the safety path when the model reports it', async () => {

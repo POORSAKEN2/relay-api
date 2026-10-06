@@ -20,6 +20,7 @@ import { exportRoutes } from './modules/export/export.routes.ts'
 import { inboxRoutes } from './modules/inbox/inbox.routes.ts'
 import { webhooksRoutes } from './modules/messaging/webhooks.routes.ts'
 import { onlineBookingRoutes } from './modules/online-booking/online-booking.routes.ts'
+import { receptionistRoutes } from './modules/receptionist/receptionist.routes.ts'
 import { settingsRoutes } from './modules/settings/settings.routes.ts'
 import { staffRoutes } from './modules/team/staff.routes.ts'
 import { teamRoutes } from './modules/team/team.routes.ts'
@@ -69,6 +70,7 @@ export function createApp() {
     exportRoutes,
     inboxRoutes,
     onlineBookingRoutes,
+    receptionistRoutes,
     settingsRoutes,
     teamRoutes,
     staffRoutes,

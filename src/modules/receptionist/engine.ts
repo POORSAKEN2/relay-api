@@ -25,7 +25,12 @@ const MAX_TOOL_ROUNDS = 4
 const NO_CALL_BACK_LINE =
   'I’m sorry, I’m having trouble on my end. Please call us back in a few minutes. Goodbye.'
 
-export type TurnReply = { say: string; action: Action | null }
+// What happened during a turn, for the test console. The phone line ignores it.
+export type TurnEvent =
+  | { type: 'tool'; name: string; ok: boolean; summary: string; job?: { id: string; date: string } }
+  | { type: 'safety' }
+
+export type TurnReply = { say: string; action: Action | null; events: TurnEvent[] }
 
 // Answers a call: saves it as answered by the AI, with the disclosure, and returns the
 // greeting. The greeting is fixed text, never the model's.
@@ -79,11 +84,12 @@ export async function startCall(
 export async function handleTurn(callId: string, callerText: string): Promise<TurnReply> {
   const session = getSession(callId)
   addTurn(session, 'caller', callerText)
+  const events: TurnEvent[] = []
 
   // Checked before the model sees the words, so no reply can talk past a gas leak.
   if (session.safety || mentionsGasOrCo(callerText)) {
     const { handoff } = await startSafety(session)
-    return reply(session, handoff.say, handoff.action)
+    return reply(session, handoff.say, handoff.action, [{ type: 'safety' }])
   }
 
   session.messages.push({ role: 'user', text: callerText })
@@ -95,7 +101,7 @@ export async function handleTurn(callId: string, callerText: string): Promise<Tu
         tools: TOOL_SPECS,
       })
       session.messages.push({ role: 'assistant', text: answer.text, toolCalls: answer.toolCalls })
-      if (answer.toolCalls.length === 0) return reply(session, answer.text, null)
+      if (answer.toolCalls.length === 0) return reply(session, answer.text, null, events)
 
       // Run every tool the model asked for, and send all the results back together.
       const results = []
@@ -103,18 +109,29 @@ export async function handleTurn(callId: string, callerText: string): Promise<Tu
       for (const call of answer.toolCalls) {
         const result = await runTool(session, call)
         results.push({ toolCallId: call.id, name: call.name, output: result.output })
+        events.push(
+          call.name === 'report_safety_issue'
+            ? { type: 'safety' }
+            : {
+                type: 'tool',
+                name: call.name,
+                ok: result.ok,
+                summary: result.summary,
+                job: result.job,
+              },
+        )
         handoff ??= result.handoff
       }
       session.messages.push({ role: 'tool', results })
       // A transfer or the safety script ends the conversation: the fixed line, no more model.
-      if (handoff) return reply(session, handoff.say, handoff.action)
+      if (handoff) return reply(session, handoff.say, handoff.action, events)
     }
     const stuck = await giveUp(session, 'too many tool rounds')
-    return reply(session, stuck.say, stuck.action)
+    return reply(session, stuck.say, stuck.action, events)
   } catch (error) {
     if (!(error instanceof LlmUnavailable)) throw error
     const failed = await giveUp(session, error.message)
-    return reply(session, failed.say, failed.action)
+    return reply(session, failed.say, failed.action, events)
   }
 }
 
@@ -146,9 +163,14 @@ async function giveUp(session: CallSession, reason: string): Promise<Handoff> {
   return { say: CALL_BACK_LINE, action: { type: 'hang_up' } }
 }
 
-function reply(session: CallSession, say: string, action: Action | null): TurnReply {
+function reply(
+  session: CallSession,
+  say: string,
+  action: Action | null,
+  events: TurnEvent[],
+): TurnReply {
   addTurn(session, 'ai', say)
-  return { say, action }
+  return { say, action, events }
 }
 
 function addTurn(session: CallSession, speaker: 'caller' | 'ai', text: string) {

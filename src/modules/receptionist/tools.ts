@@ -26,7 +26,14 @@ const WINDOWS_OFFERED = 6
 
 // A tool that ends the conversation (transfer, safety) also gives the fixed line to say.
 export type Handoff = { say: string; action: Action }
-export type ToolResult = { output: string; handoff?: Handoff }
+// `output` goes back to the model; `ok` and `summary` say what happened, for the test console.
+export type ToolResult = {
+  output: string
+  ok: boolean
+  summary: string // "Booked Tuesday, January 8, between 8 AM and 12 PM"
+  job?: { id: string; date: string } // the job a booking made
+  handoff?: Handoff
+}
 
 const CheckServiceArea = z.object({ zip: Zip.describe('The 5-digit ZIP code of the home') })
 const NoInput = z.object({})
@@ -118,7 +125,8 @@ async function checkServiceArea(session: CallSession, input: unknown): Promise<T
   if (!parsed.success) return error('Ask for the 5-digit ZIP code.')
   const served = await zipIsServed(session.tenant.id, parsed.data.zip)
   session.zip = parsed.data.zip
-  return ok({ zip: parsed.data.zip, served })
+  const { zip } = parsed.data
+  return ok({ zip, served }, served ? `ZIP ${zip} is served` : `ZIP ${zip} is outside the area`)
 }
 
 async function getOpenWindows(session: CallSession): Promise<ToolResult> {
@@ -131,16 +139,19 @@ async function getOpenWindows(session: CallSession): Promise<ToolResult> {
     return { key, when: label }
   })
   if (windows.length === 0) {
-    return ok({ windows, note: 'Nothing is open in the next two weeks. Take a message.' })
+    return ok(
+      { windows, note: 'Nothing is open in the next two weeks. Take a message.' },
+      'No open windows',
+    )
   }
-  return ok({ windows })
+  return ok({ windows }, `Offered ${windows.length} windows`)
 }
 
 async function flagPriority(session: CallSession, input: unknown): Promise<ToolResult> {
   if (!FlagPriority.safeParse(input).success) return error('Say who is at risk.')
   session.priority = true
   await queries.updateCall(session.tenant.id, session.callId, { priority: true })
-  return ok({ priority: true })
+  return ok({ priority: true }, 'Priority flagged')
 }
 
 async function bookVisit(session: CallSession, input: unknown): Promise<ToolResult> {
@@ -185,7 +196,10 @@ async function bookVisit(session: CallSession, input: unknown): Promise<ToolResu
       consent: visit.textConsent ? { source: 'call', wording: CALL_CONSENT_QUESTION } : null,
     })
     session.bookedJobId = jobId
-    return ok({ booked: true, when: window.label })
+    return {
+      ...ok({ booked: true, when: window.label }, `Booked ${window.label}`),
+      job: { id: jobId, date: window.date },
+    }
   } catch (failure) {
     // A window that filled during the call, a ZIP outside the area...: the model is told and
     // offers something else.
@@ -207,7 +221,7 @@ async function takeMessage(session: CallSession, input: unknown): Promise<ToolRe
     message: parsed.data.message,
     source: 'ai',
   })
-  return ok({ saved: true })
+  return ok({ saved: true }, 'Message saved')
 }
 
 async function transferToHuman(session: CallSession, input: unknown): Promise<ToolResult> {
@@ -216,7 +230,7 @@ async function transferToHuman(session: CallSession, input: unknown): Promise<To
   if (!to) return error('Nobody can take the call right now. Offer to take a message instead.')
   await queries.updateCall(session.tenant.id, session.callId, { transferredAt: new Date() })
   return {
-    output: JSON.stringify({ transferring: true }),
+    ...ok({ transferring: true }, `Transfer to ${to}`),
     handoff: {
       say: 'Of course. I’m connecting you now, please hold.',
       action: { type: 'transfer', to },
@@ -229,8 +243,8 @@ async function transferToHuman(session: CallSession, input: unknown): Promise<To
 // safe to run again on a later turn.
 export async function startSafety(
   session: CallSession,
-): Promise<{ output: string; handoff: Handoff }> {
-  const output = JSON.stringify({ safety: true })
+): Promise<ToolResult & { handoff: Handoff }> {
+  const result = ok({ safety: true }, 'Safety script')
   const to = session.tenant.onCallPhone
   if (!session.safety) {
     session.safety = true
@@ -241,8 +255,8 @@ export async function startSafety(
     })
   }
   if (!to)
-    return { output, handoff: { say: SAFETY_SCRIPT_NO_TRANSFER, action: { type: 'hang_up' } } }
-  return { output, handoff: { say: SAFETY_SCRIPT, action: { type: 'transfer', to } } }
+    return { ...result, handoff: { say: SAFETY_SCRIPT_NO_TRANSFER, action: { type: 'hang_up' } } }
+  return { ...result, handoff: { say: SAFETY_SCRIPT, action: { type: 'transfer', to } } }
 }
 
 // The office during today's business hours, the on-call phone after (see transfer.ts).
@@ -253,12 +267,12 @@ async function findTransferTarget(session: CallSession) {
   return transferTarget(tenant, windows, localTime(tenant.timezone))
 }
 
-function ok(result: object): ToolResult {
-  return { output: JSON.stringify(result) }
+function ok(result: object, summary: string): ToolResult {
+  return { output: JSON.stringify(result), ok: true, summary }
 }
 
 function error(message: string): ToolResult {
-  return { output: JSON.stringify({ error: message }) }
+  return { output: JSON.stringify({ error: message }), ok: false, summary: message }
 }
 
 // 'name: Enter your name; zip: …', for the model to ask again.
