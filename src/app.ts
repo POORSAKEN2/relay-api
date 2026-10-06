@@ -17,6 +17,7 @@ import { customersRoutes } from './modules/customers/customers.routes.ts'
 import { importsRoutes } from './modules/customers/imports.routes.ts'
 import { dispatchRoutes } from './modules/dispatch/dispatch.routes.ts'
 import { exportRoutes } from './modules/export/export.routes.ts'
+import { inboxRoutes } from './modules/inbox/inbox.routes.ts'
 import { webhooksRoutes } from './modules/messaging/webhooks.routes.ts'
 import { onlineBookingRoutes } from './modules/online-booking/online-booking.routes.ts'
 import { settingsRoutes } from './modules/settings/settings.routes.ts'
@@ -66,6 +67,7 @@ export function createApp() {
     customersRoutes,
     dispatchRoutes,
     exportRoutes,
+    inboxRoutes,
     onlineBookingRoutes,
     settingsRoutes,
     teamRoutes,
