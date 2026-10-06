@@ -13,6 +13,7 @@ import { tenantUrl } from '../../lib/tenant-url.ts'
 import * as audit from '../audit/audit.queries.ts'
 import * as booking from '../booking/booking.queries.ts'
 import { announceBooking, insertBookedJob, reserveWindow } from '../booking/booking.service.ts'
+import * as calls from '../calls/calls.queries.ts'
 import * as customers from '../customers/customers.queries.ts'
 import { sendBookingConfirmation } from '../homeowner-messages/homeowner-messages.service.ts'
 import { sendText } from '../messaging/sms.ts'
@@ -38,6 +39,9 @@ const RECOVERY_CUTOFF_HOURS = 24
 
 // Photos on a draft nobody booked are kept this long after its last activity.
 const PHOTO_KEEP_DAYS = 30
+
+// A booking counts as won back by a missed-call text only within this many days of the call.
+const CALL_LINK_DAYS = 7
 
 // Shown next to the consent checkboxes and stored with the consent as proof. The booking
 // page gets them from getOptions, so both sides always use the same words.
@@ -248,6 +252,17 @@ export async function bookVisit(tenant: Tenant, input: BookingInput, ip: string 
     await checkServiceAndZip(tenant.id, input.serviceId, input.zip, tx)
     const slot = await reserveOpenWindow(tx, tenant.id, input.windowId, input.date)
 
+    // An unknown draft token is ignored: a draft must never stop a booking.
+    const draft = input.draftToken
+      ? await queries.findOpenDraft(tenant.id, input.draftToken, tx)
+      : undefined
+    // A booking from a missed-call text counts as recovered. Any other id (unknown, another
+    // contractor's, an answered or old call) is ignored: a wrong link must never stop a booking.
+    const callId = input.callId ?? draft?.answers.callId
+    const since = new Date(Date.now() - CALL_LINK_DAYS * 24 * 3_600_000)
+    const call = callId ? await calls.findRecentMissedCall(tenant.id, callId, since, tx) : undefined
+    const source = call ? 'text_back' : 'web'
+
     const customer = await findOrAddCustomer(tenant.id, input, tx)
     const property =
       (await customers.findPropertyAt(tenant.id, customer.id, input, tx)) ??
@@ -272,7 +287,8 @@ export async function bookVisit(tenant: Tenant, input: BookingInput, ip: string 
         serviceId: input.serviceId,
         status: 'booked',
         bookedAt: new Date(),
-        source: 'web',
+        source,
+        callId: call?.id,
         priority: input.vulnerableOccupant || priorityFeeCents > 0,
         priorityFeeCents,
         problem: input.problem,
@@ -287,11 +303,7 @@ export async function bookVisit(tenant: Tenant, input: BookingInput, ip: string 
       await recordConsent(tenant.id, { phone: input.phone, granted: true, ip, jobId: job.id }, tx)
     }
     await sendBookingConfirmation(tenant.id, job.id, tx)
-    // The booking this draft was for is made. An unknown token is ignored: a draft must never
-    // stop a booking.
-    const draft = input.draftToken
-      ? await queries.findOpenDraft(tenant.id, input.draftToken, tx)
-      : undefined
+    // The booking this draft was for is made.
     if (draft) await queries.markDraftBooked(tenant.id, draft.id, job.id, tx)
 
     await audit.insertHomeownerAction(
@@ -300,7 +312,7 @@ export async function bookVisit(tenant: Tenant, input: BookingInput, ip: string 
         action: 'job.booked',
         entityType: 'job',
         entityId: job.id,
-        data: { source: 'web', date: input.date, windowId: input.windowId, priorityFeeCents },
+        data: { source, date: input.date, windowId: input.windowId, priorityFeeCents },
       },
       tx,
     )

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import request from 'supertest'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -7,7 +8,9 @@ import { db } from '../../db/client.ts'
 import {
   arrivalWindows,
   auditEvents,
+  bookingDrafts,
   callbackRequests,
+  calls,
   consentEvents,
   customers,
   jobItems,
@@ -438,6 +441,77 @@ describe('POST /api/online-booking/bookings', () => {
     const window = await post('bookings', bookingBody(shop, { windowId: other.tueMorning.id }))
     expect(window.status).toBe(404)
     await post('bookings', bookingBody(shop), 'nope').expect(404)
+  })
+
+  describe('from a missed-call text', () => {
+    async function missedCall(shop: Shop, values: Partial<typeof calls.$inferInsert> = {}) {
+      const [call] = await db
+        .insert(calls)
+        .values({
+          tenantId: shop.tenant.id,
+          providerSid: randomUUID(),
+          fromPhone: '+14805550199',
+          toPhone: '+14805550100',
+          ...values,
+        })
+        .returning()
+      return call
+    }
+
+    async function bookedJob(body: Record<string, unknown>) {
+      const res = await post('bookings', body).expect(201)
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, res.body.jobId))
+      return job
+    }
+
+    it('counts as recovered: source text_back, linked to the call', async () => {
+      const shop = await createServingShop()
+      const call = await missedCall(shop)
+
+      const job = await bookedJob(bookingBody(shop, { callId: call.id }))
+
+      expect(job).toMatchObject({ source: 'text_back', callId: call.id })
+      const [audit] = await db.select().from(auditEvents)
+      expect(audit.data).toMatchObject({ source: 'text_back' })
+    })
+
+    it('books as a plain web booking when the call id is no good', async () => {
+      const shop = await createServingShop()
+      const other = await createServingShop('other')
+      const theirs = await missedCall(other)
+      const answered = await missedCall(shop, { answeredBy: 'office' })
+      const old = await missedCall(shop, { startedAt: new Date(Date.now() - 8 * 86_400_000) })
+      // Room for all five bookings below in one window.
+      await db
+        .update(arrivalWindows)
+        .set({ jobCap: 5 })
+        .where(eq(arrivalWindows.id, shop.tueMorning.id))
+
+      for (const callId of [randomUUID(), theirs.id, answered.id, old.id, 'not-a-uuid']) {
+        const job = await bookedJob(bookingBody(shop, { callId }))
+        expect(job).toMatchObject({ source: 'web', callId: null })
+      }
+    })
+
+    it('remembers the call through a draft resumed later', async () => {
+      const shop = await createServingShop()
+      const call = await missedCall(shop)
+      const [draft] = await db
+        .insert(bookingDrafts)
+        .values({
+          tenantId: shop.tenant.id,
+          token: 'draft-token',
+          name: 'Sam Reed',
+          phone: '+14805550199',
+          zip: '85201',
+          answers: { callId: call.id },
+        })
+        .returning()
+
+      const job = await bookedJob(bookingBody(shop, { draftToken: draft.token }))
+
+      expect(job).toMatchObject({ source: 'text_back', callId: call.id })
+    })
   })
 
   it('lists every missing piece of an empty form at once', async () => {

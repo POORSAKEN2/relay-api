@@ -895,6 +895,7 @@ export type DraftAnswers = {
   systemType?: (typeof SYSTEM_TYPES)[number]
   vulnerableOccupant?: boolean
   priorityService?: boolean
+  callId?: string // the missed call whose text-back link started this booking
 }
 
 // An online booking somebody started and hasn't finished. Saved once they give a name and
