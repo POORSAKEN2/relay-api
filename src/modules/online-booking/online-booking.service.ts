@@ -242,26 +242,52 @@ export async function joinWaitlist(tenantId: string, input: WaitlistInput, ip: s
   })
 }
 
-// Step 6: saves the homeowner and their address, and books the arrival window. There is no
-// online payment: the visit fee and any priority fee are paid to the technician at the visit.
+// Where a booking came from, and the consent that came with it.
+export type BookingOrigin = {
+  source: 'web' | 'text_back' | 'ai'
+  callId?: string // the call it came from: the missed call (text_back) or the AI's call
+  ip: string | null // web form only
+  // The homeowner's yes to texts, kept as proof. null: no yes (box unticked, or the caller
+  // said no on the phone), so nothing is recorded and the confirmation text is blocked.
+  consent: { source: 'booking_form' | 'call'; wording: string } | null
+  draftId?: string // the web draft this booking finishes
+}
+
+// Step 6: the web form's booking. A booking from a missed-call text counts as recovered; any
+// other call id (unknown, another contractor's, an answered or old call) is ignored, and so is
+// an unknown draft token: a wrong link must never stop a booking.
 export async function bookVisit(tenant: Tenant, input: BookingInput, ip: string | null) {
+  const draft = input.draftToken
+    ? await queries.findOpenDraft(tenant.id, input.draftToken)
+    : undefined
+  const callId = input.callId ?? draft?.answers.callId
+  const since = new Date(Date.now() - CALL_LINK_DAYS * 24 * 3_600_000)
+  const call = callId ? await calls.findRecentMissedCall(tenant.id, callId, since) : undefined
+
+  return bookHomeownerVisit(tenant, input, {
+    source: call ? 'text_back' : 'web',
+    callId: call?.id,
+    ip,
+    consent: input.consent ? { source: 'booking_form', wording: CONSENT_WORDING } : null,
+    draftId: draft?.id,
+  })
+}
+
+// Every homeowner booking (web form, missed-call link, AI on the phone) goes through here, so
+// all of them follow the same checks and send the same texts. Saves the homeowner and their
+// address, and books the arrival window. There is no online payment: the visit fee and any
+// priority fee are paid to the technician at the visit.
+export async function bookHomeownerVisit(
+  tenant: Tenant,
+  input: BookingInput,
+  origin: BookingOrigin,
+) {
   // The fee applies only when the contractor offers priority service and the homeowner chose it.
   const priorityFeeCents = input.priorityService ? tenant.priorityFeeCents : 0
 
   const job = await db.transaction(async (tx) => {
     await checkServiceAndZip(tenant.id, input.serviceId, input.zip, tx)
     const slot = await reserveOpenWindow(tx, tenant.id, input.windowId, input.date)
-
-    // An unknown draft token is ignored: a draft must never stop a booking.
-    const draft = input.draftToken
-      ? await queries.findOpenDraft(tenant.id, input.draftToken, tx)
-      : undefined
-    // A booking from a missed-call text counts as recovered. Any other id (unknown, another
-    // contractor's, an answered or old call) is ignored: a wrong link must never stop a booking.
-    const callId = input.callId ?? draft?.answers.callId
-    const since = new Date(Date.now() - CALL_LINK_DAYS * 24 * 3_600_000)
-    const call = callId ? await calls.findRecentMissedCall(tenant.id, callId, since, tx) : undefined
-    const source = call ? 'text_back' : 'web'
 
     const customer = await findOrAddCustomer(tenant.id, input, tx)
     const property =
@@ -287,8 +313,8 @@ export async function bookVisit(tenant: Tenant, input: BookingInput, ip: string 
         serviceId: input.serviceId,
         status: 'booked',
         bookedAt: new Date(),
-        source,
-        callId: call?.id,
+        source: origin.source,
+        callId: origin.callId,
         priority: input.vulnerableOccupant || priorityFeeCents > 0,
         priorityFeeCents,
         problem: input.problem,
@@ -299,23 +325,40 @@ export async function bookVisit(tenant: Tenant, input: BookingInput, ip: string 
       tx,
     )
 
-    if (input.consent) {
-      await recordConsent(tenant.id, { phone: input.phone, granted: true, ip, jobId: job.id }, tx)
+    // Saved before the confirmation, so the compliance gate finds it.
+    if (origin.consent) {
+      const { source, wording } = origin.consent
+      // The form's wording covers texts and calls; the AI's spoken question asks about texts.
+      const channels = source === 'booking_form' ? (['sms', 'voice'] as const) : (['sms'] as const)
+      for (const channel of channels) {
+        await booking.insertConsent(
+          tenant.id,
+          {
+            contact: input.phone,
+            channel,
+            granted: true,
+            source,
+            wording,
+            jobId: job.id,
+            callId: source === 'call' ? origin.callId : undefined,
+            ip: origin.ip,
+          },
+          tx,
+        )
+      }
     }
     await sendBookingConfirmation(tenant.id, job.id, tx)
     // The booking this draft was for is made.
-    if (draft) await queries.markDraftBooked(tenant.id, draft.id, job.id, tx)
+    if (origin.draftId) await queries.markDraftBooked(tenant.id, origin.draftId, job.id, tx)
 
-    await audit.insertHomeownerAction(
-      tenant.id,
-      {
-        action: 'job.booked',
-        entityType: 'job',
-        entityId: job.id,
-        data: { source, date: input.date, windowId: input.windowId, priorityFeeCents },
-      },
-      tx,
-    )
+    const event = {
+      action: 'job.booked',
+      entityType: 'job',
+      entityId: job.id,
+      data: { source: origin.source, date: input.date, windowId: input.windowId, priorityFeeCents },
+    }
+    if (origin.source === 'ai') await audit.insertAiAction(tenant.id, event, tx)
+    else await audit.insertHomeownerAction(tenant.id, event, tx)
     return job
   })
 
@@ -385,7 +428,7 @@ async function checkZipServed(tenantId: string, zip: string, tx: Db = db) {
 // The consent wording covers texts and calls, so one row is written for each, as proof.
 async function recordConsent(
   tenantId: string,
-  values: { phone: string; granted: boolean; ip: string | null; jobId?: string },
+  values: { phone: string; granted: boolean; ip: string | null },
   tx: Db,
 ) {
   for (const channel of ['sms', 'voice'] as const) {
@@ -397,7 +440,6 @@ async function recordConsent(
         granted: values.granted,
         source: 'booking_form',
         wording: CONSENT_WORDING,
-        jobId: values.jobId,
         ip: values.ip,
       },
       tx,

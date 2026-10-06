@@ -24,7 +24,13 @@ import {
 } from '../../db/schema.ts'
 import { weekdayOf } from '../../lib/labels.ts'
 import { emitToTenant } from '../../realtime/index.ts'
-import { CONSENT_WORDING, expireHolds, WAITLIST_CONSENT_WORDING } from './online-booking.service.ts'
+import { BookingInput } from './online-booking.schemas.ts'
+import {
+  bookHomeownerVisit,
+  CONSENT_WORDING,
+  expireHolds,
+  WAITLIST_CONSENT_WORDING,
+} from './online-booking.service.ts'
 
 vi.mock('../../realtime/index.ts', () => ({ emitToTenant: vi.fn() }))
 
@@ -646,5 +652,75 @@ describe('expireHolds', () => {
     expect(await statusOf(stale.id)).toBe('expired')
     expect(await statusOf(fresh.id)).toBe('held')
     await post('bookings', bookingBody(shop)).expect(201)
+  })
+})
+
+describe('bookHomeownerVisit', () => {
+  async function aiCall(shop: Shop) {
+    const [call] = await db
+      .insert(calls)
+      .values({
+        tenantId: shop.tenant.id,
+        providerSid: randomUUID(),
+        fromPhone: '+14805550199',
+        toPhone: '+14805550100',
+        answeredBy: 'ai',
+        disclosedAt: new Date(),
+      })
+      .returning()
+    return call
+  }
+
+  it('books for the AI: source ai, the call linked, the spoken yes kept as proof', async () => {
+    const shop = await createServingShop()
+    const call = await aiCall(shop)
+    const input = BookingInput.parse(bookingBody(shop, { consent: false, email: '' }))
+
+    const { jobId } = await bookHomeownerVisit(shop.tenant, input, {
+      source: 'ai',
+      callId: call.id,
+      ip: null,
+      consent: { source: 'call', wording: 'Can we text you?' },
+    })
+
+    const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId))
+    expect(job).toMatchObject({ source: 'ai', callId: call.id, status: 'booked' })
+    expect(await db.select().from(consentEvents)).toEqual([
+      expect.objectContaining({
+        channel: 'sms',
+        source: 'call',
+        wording: 'Can we text you?',
+        callId: call.id,
+        jobId,
+        granted: true,
+      }),
+    ])
+    const [confirmation] = await db
+      .select()
+      .from(messages)
+      .where(eq(messages.kind, 'booking_confirmation'))
+    expect(confirmation.status).toBe('queued')
+    const [audit] = await db.select().from(auditEvents)
+    expect(audit).toMatchObject({ actorType: 'ai', actorUserId: null, action: 'job.booked' })
+  })
+
+  it('books without consent when the caller said no to texts: the confirmation is blocked', async () => {
+    const shop = await createServingShop()
+    const call = await aiCall(shop)
+    const input = BookingInput.parse(bookingBody(shop, { email: '' }))
+
+    await bookHomeownerVisit(shop.tenant, input, {
+      source: 'ai',
+      callId: call.id,
+      ip: null,
+      consent: null,
+    })
+
+    expect(await db.select().from(consentEvents)).toHaveLength(0)
+    const [confirmation] = await db
+      .select()
+      .from(messages)
+      .where(eq(messages.kind, 'booking_confirmation'))
+    expect(confirmation).toMatchObject({ status: 'blocked', blockedReason: 'no_consent' })
   })
 })
