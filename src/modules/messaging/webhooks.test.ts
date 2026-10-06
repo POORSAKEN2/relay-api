@@ -2,13 +2,16 @@ import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { SignJWT } from 'jose'
 import request from 'supertest'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createTenant, resetDb } from '../../../test/helpers.ts'
 import { createApp } from '../../app.ts'
 import { env } from '../../config/env.ts'
 import { db } from '../../db/client.ts'
 import { calls, consentEvents, customers, messages, phoneNumbers } from '../../db/schema.ts'
+import { emitToTenant } from '../../realtime/index.ts'
 import { sendText } from './sms.ts'
+
+vi.mock('../../realtime/index.ts', () => ({ emitToTenant: vi.fn() }))
 
 const app = createApp()
 const KEY = 'test-webhook-signing-key'
@@ -17,6 +20,7 @@ const HOMEOWNER = '+639171234567'
 
 beforeEach(async () => {
   await resetDb()
+  vi.mocked(emitToTenant).mockClear()
   env.HTTPSMS_WEBHOOK_SIGNING_KEY = KEY
 })
 afterEach(() => {
@@ -134,6 +138,7 @@ describe('POST /api/webhooks/httpsms', () => {
     await post('message.phone.received', { contact: HOMEOWNER, content: 'Hi' }, id)
     await post('message.phone.received', { contact: HOMEOWNER, content: 'Hi' }, id)
     expect(await db.select().from(messages).where(eq(messages.tenantId, tenant.id))).toHaveLength(1)
+    expect(emitToTenant).toHaveBeenCalledTimes(1)
   })
 
   it('saves a text from a homeowner, matched to their customer record', async () => {
@@ -162,6 +167,8 @@ describe('POST /api/webhooks/httpsms', () => {
         providerMessageId: 'httpsms-in-1',
       }),
     ])
+    // The office's inbox hears about it once the text is saved.
+    expect(emitToTenant).toHaveBeenCalledWith(tenant.id, 'inbox.updated', { contact: HOMEOWNER })
   })
 
   it.each(['STOP', 'stopall', 'Unsubscribe', 'cancel', 'END', 'quit', 'Stop.', ' stop!! '])(
@@ -338,5 +345,6 @@ describe('POST /api/webhooks/httpsms', () => {
     await createTenant('desert')
     await post('message.phone.received', { contact: HOMEOWNER, content: 'Hi' })
     expect(await db.select().from(messages)).toHaveLength(0)
+    expect(emitToTenant).not.toHaveBeenCalled()
   })
 })
