@@ -218,13 +218,16 @@ export async function blockWaitingTexts(
     )
 }
 
+// The new call's id, or undefined when the call was already saved (a repeated webhook).
 export async function insertMissedCall(
   tenantId: string,
   values: Omit<typeof calls.$inferInsert, 'tenantId'>,
   tx: Db,
 ) {
-  await tx
+  const [call] = await tx
     .insert(calls)
     .values({ tenantId, ...values })
     .onConflictDoNothing()
+    .returning({ id: calls.id })
+  return call?.id
 }

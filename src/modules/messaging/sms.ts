@@ -18,6 +18,7 @@ export async function sendText(
     toUserId?: string // the staff member or technician it goes to
     jobId?: string // the job it is about
     customerId?: string // the homeowner it goes to
+    callId?: string // the missed call a text-back answers
   },
   tx: Db = db,
 ) {

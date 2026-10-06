@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { db, type Tx } from '../../db/client.ts'
 import { Phone } from '../../lib/fields.ts'
 import { logger } from '../../lib/logger.ts'
+import { textBackMissedCall } from '../calls/calls.service.ts'
 import * as queries from './messaging.queries.ts'
 import { HOMEOWNER_KINDS } from './rules.ts'
 
@@ -118,11 +119,11 @@ async function receiveText(event: HttpSmsEvent, tx: Tx) {
   }
 }
 
-// A call nobody answered. Texting the caller back is the text-back feature's job.
+// A call nobody answered: saved, and the caller gets a text with a booking link.
 async function recordMissedCall(event: HttpSmsEvent, tx: Tx) {
   const found = await findSides(event, tx)
   if (!found) return
-  await queries.insertMissedCall(
+  const callId = await queries.insertMissedCall(
     found.tenantId,
     {
       providerSid: event.data.message_id ?? event.id,
@@ -135,6 +136,8 @@ async function recordMissedCall(event: HttpSmsEvent, tx: Tx) {
     },
     tx,
   )
+  // No id: the call was already saved by an earlier copy of this event, which texted already.
+  if (callId) await textBackMissedCall(found.tenantId, callId, tx)
 }
 
 // The contractor (by the phone's own number) and the other side's number as E.164, which is

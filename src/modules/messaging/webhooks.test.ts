@@ -282,7 +282,7 @@ describe('POST /api/webhooks/httpsms', () => {
     expect(afterStart).toMatchObject({ status: 'queued', blockedReason: null })
   })
 
-  it('records a missed call', async () => {
+  it('records a missed call and texts the caller a booking link', async () => {
     const tenant = await shop()
 
     await post('message.call.missed', {
@@ -291,7 +291,8 @@ describe('POST /api/webhooks/httpsms', () => {
       timestamp: '2030-01-08T09:15:00+08:00',
     })
 
-    expect(await db.select().from(calls)).toEqual([
+    const saved = await db.select().from(calls)
+    expect(saved).toEqual([
       expect.objectContaining({
         tenantId: tenant.id,
         providerSid: 'call-1',
@@ -301,6 +302,36 @@ describe('POST /api/webhooks/httpsms', () => {
         startedAt: new Date('2030-01-08T01:15:00Z'),
       }),
     ])
+    expect(await db.select().from(messages)).toEqual([
+      expect.objectContaining({
+        kind: 'text_back',
+        status: 'queued',
+        contact: HOMEOWNER,
+        callId: saved[0].id,
+        body: expect.stringContaining(`?call=${saved[0].id}&phone=`),
+      }),
+    ])
+  })
+
+  it('saves one call and one text when the same missed-call event comes twice', async () => {
+    await shop()
+    const eventId = randomUUID()
+    const data = { contact: HOMEOWNER, message_id: 'call-1' }
+
+    await post('message.call.missed', data, eventId)
+    await post('message.call.missed', data, eventId)
+    // httpSMS sent it again under a new event id: the call is still known.
+    await post('message.call.missed', data)
+
+    expect(await db.select().from(calls)).toHaveLength(1)
+    expect(await db.select().from(messages)).toHaveLength(1)
+  })
+
+  it('records a missed call from a hidden number without texting', async () => {
+    await shop()
+    await post('message.call.missed', { message_id: 'call-1' })
+    expect(await db.select().from(calls)).toHaveLength(1)
+    expect(await db.select().from(messages)).toHaveLength(0)
   })
 
   it('answers 200 to an event for a number no contractor has, and saves nothing', async () => {
