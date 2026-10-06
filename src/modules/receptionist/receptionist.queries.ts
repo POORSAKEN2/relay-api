@@ -1,7 +1,8 @@
-import { and, eq } from 'drizzle-orm'
-import { db } from '../../db/client.ts'
-import { calls, tenants } from '../../db/schema.ts'
+import { and, eq, isNull, sql } from 'drizzle-orm'
+import { type Db, db } from '../../db/client.ts'
+import { calls, jobs, tenants } from '../../db/schema.ts'
 import { findCustomer, listProperties } from '../customers/customers.queries.ts'
+import { localOrNull } from '../dispatch/dispatch.queries.ts'
 import { findCustomerIdByPhone } from '../messaging/messaging.queries.ts'
 
 export async function findTenant(tenantId: string) {
@@ -58,4 +59,41 @@ export async function findCallerContext(tenantId: string, phone: string) {
         `${property.street}${property.unit ? ` ${property.unit}` : ''}, ${property.city}`,
     ),
   }
+}
+
+// What the wrap-up needs about an AI call: its transcript, what happened, and the job it
+// booked (with its local day and window), if any.
+export async function findCallToWrapUp(tenantId: string, callId: string) {
+  const [call] = await db
+    .select({
+      transcript: calls.transcript,
+      summary: calls.summary,
+      safetyFlag: calls.safetyFlag,
+      transferredAt: calls.transferredAt,
+      messageTaken: sql<boolean>`exists (
+        select 1 from callback_requests
+        where callback_requests.tenant_id = ${calls.tenantId} and callback_requests.call_id = ${calls.id}
+      )`,
+      jobId: jobs.id,
+      jobDate: localOrNull(jobs.windowStartsAt, 'YYYY-MM-DD'),
+      jobStartsAt: localOrNull(jobs.windowStartsAt, 'HH24:MI:SS'),
+      jobEndsAt: localOrNull(jobs.windowEndsAt, 'HH24:MI:SS'),
+    })
+    .from(calls)
+    .innerJoin(tenants, eq(tenants.id, calls.tenantId))
+    .leftJoin(jobs, and(eq(jobs.tenantId, calls.tenantId), eq(jobs.callId, calls.id)))
+    .where(and(eq(calls.tenantId, tenantId), eq(calls.id, callId)))
+    .limit(1)
+  return call
+}
+
+// Saves the summary only if the call has none yet. False when another run of the job got
+// there first, so its note isn't added twice.
+export async function saveSummary(tenantId: string, callId: string, summary: string, tx: Db) {
+  const saved = await tx
+    .update(calls)
+    .set({ summary })
+    .where(and(eq(calls.tenantId, tenantId), eq(calls.id, callId), isNull(calls.summary)))
+    .returning({ id: calls.id })
+  return saved.length > 0
 }

@@ -1,18 +1,11 @@
 import * as Sentry from '@sentry/node'
-import { PgBoss } from 'pg-boss'
-import { env } from '../config/env.ts'
 import { logger } from '../lib/logger.ts'
 import * as accounts from '../modules/accounts/accounts.service.ts'
 import * as billing from '../modules/billing/billing.service.ts'
 import * as homeownerMessages from '../modules/homeowner-messages/homeowner-messages.service.ts'
 import * as onlineBooking from '../modules/online-booking/online-booking.service.ts'
-
-const boss = new PgBoss(env.DATABASE_URL)
-
-boss.on('error', (error) => {
-  logger.error({ err: error }, 'pg-boss error')
-  Sentry.captureException(error)
-})
+import { wrapUpCall } from '../modules/receptionist/wrap-up.ts'
+import { boss } from './boss.ts'
 
 export async function startJobs() {
   await boss.start()
@@ -52,6 +45,11 @@ export async function startJobs() {
     const deleted = await onlineBooking.deleteIdlePhotos()
     if (deleted > 0) logger.info({ deleted }, 'Idle booking photos deleted')
   })
+
+  // Queued when an AI call ends: its summary, on the call and on the job it booked.
+  await register<{ tenantId: string; callId: string }>('call-wrapup', {}, ({ tenantId, callId }) =>
+    wrapUpCall(tenantId, callId),
+  )
 }
 
 export async function stopJobs() {

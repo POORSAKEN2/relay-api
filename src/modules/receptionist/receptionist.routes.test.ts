@@ -12,6 +12,8 @@ vi.mock('../llm/llm.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../llm/llm.ts')>()),
   chat: vi.fn(),
 }))
+// Ending a call queues its wrap-up; no job runner in tests.
+vi.mock('../../jobs/boss.ts', () => ({ queueJob: vi.fn() }))
 
 const app = createApp()
 

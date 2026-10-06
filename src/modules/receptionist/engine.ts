@@ -1,3 +1,4 @@
+import { queueJob } from '../../jobs/boss.ts'
 import { formatMoney } from '../../lib/labels.ts'
 import { logger } from '../../lib/logger.ts'
 import { chat, LlmUnavailable } from '../llm/llm.ts'
@@ -11,9 +12,11 @@ import {
   findSession,
   forgetSession,
   getSession,
+  listSessions,
   saveSession,
 } from './session.ts'
 import { type Handoff, runTool, startSafety, TOOL_SPECS } from './tools.ts'
+import { formatTranscript } from './transcript.ts'
 
 // The AI receptionist: text in, text out. A phone line (or the test console) turns the
 // caller's speech into text, calls handleTurn, and speaks what comes back.
@@ -135,13 +138,46 @@ export async function handleTurn(callId: string, callerText: string): Promise<Tu
   }
 }
 
-// The call is over: when it ended is saved and the session forgotten. Ending a call twice
-// does nothing the second time.
+// The call is over: its end and transcript are saved, the summary is left to the 'call-wrapup'
+// job (so hanging up never waits on the model), and the session is forgotten. Ending a call
+// twice does nothing the second time.
 export async function endCall(callId: string) {
   const session = findSession(callId)
   if (!session) return
   forgetSession(callId)
-  await queries.updateCall(session.tenant.id, callId, { endedAt: new Date() })
+  const tenantId = session.tenant.id
+  await queries.updateCall(tenantId, callId, {
+    endedAt: new Date(),
+    transcript: formatTranscript(session.turns),
+  })
+  await queueJob('call-wrapup', { tenantId, callId })
+}
+
+// A call nobody ended: the line dropped without a close, or a test console tab was closed.
+const IDLE_MINUTES = 10
+const SWEEP_MS = 60_000
+let sweep: NodeJS.Timeout | undefined
+
+// Ends calls with no activity for 10 minutes, through endCall like any other call.
+export async function endIdleCalls(now = new Date()) {
+  const cutoff = now.getTime() - IDLE_MINUTES * 60_000
+  for (const session of listSessions()) {
+    if (session.lastActivity.getTime() < cutoff) {
+      await endCall(session.callId).catch((error) =>
+        logger.error({ err: error, callId: session.callId }, 'Ending an idle call failed'),
+      )
+    }
+  }
+}
+
+// Started and stopped with the server, like the sender loop.
+export function startCallSweep() {
+  sweep ??= setInterval(() => void endIdleCalls(), SWEEP_MS)
+}
+
+export function stopCallSweep() {
+  clearInterval(sweep)
+  sweep = undefined
 }
 
 // The model failed or got stuck. The caller is never left in silence: whatever they said is

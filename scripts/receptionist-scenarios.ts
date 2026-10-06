@@ -10,8 +10,10 @@ import { and, eq, inArray } from 'drizzle-orm'
 import { env } from '../src/config/env.ts'
 import { db, pool } from '../src/db/client.ts'
 import { callbackRequests, calls, jobs, tenants } from '../src/db/schema.ts'
+import { boss } from '../src/jobs/boss.ts'
 import { endCall, handleTurn } from '../src/modules/receptionist/engine.ts'
 import { startTestCall } from '../src/modules/receptionist/test-console.service.ts'
+import { wrapUpCall } from '../src/modules/receptionist/wrap-up.ts'
 
 type Outcome = 'booked' | 'priority' | 'safety' | 'message' | 'transfer'
 type Scenario = { name: string; fromPhone: string; callerLines: string[]; expect: Outcome }
@@ -22,6 +24,10 @@ const scenarios: Scenario[] = JSON.parse(
 
 const [tenant] = await db.select().from(tenants).where(eq(tenants.slug, 'desert'))
 if (!tenant) throw new Error('No demo contractor "desert": run npm run db:seed first')
+
+// Ending a call queues its wrap-up, so the job queue must be up.
+await boss.start()
+await boss.createQueue('call-wrapup')
 
 const summary: string[] = []
 const bookedJobIds: string[] = []
@@ -51,6 +57,14 @@ for (const [index, scenario] of scenarios.entries()) {
     }
   }
   await endCall(callId)
+  // Wrapped up here, not by the queue, so the summary prints with its call.
+  await wrapUpCall(tenant.id, callId)
+  const [ended] = await db
+    .select({ summary: calls.summary })
+    .from(calls)
+    .where(eq(calls.id, callId))
+  console.log(`Summary: ${ended.summary}`)
+  console.log()
 
   const outcomes = await outcomesOf(tenant.id, callId)
   const average = seconds.reduce((sum, value) => sum + value, 0) / seconds.length
@@ -71,6 +85,7 @@ if (bookedJobIds.length > 0) {
 
 console.log(`\n=== Summary (LLM_PROVIDER=${env.LLM_PROVIDER})`)
 for (const line of summary) console.log(line)
+await boss.stop()
 await pool.end()
 
 // What the call ended up doing, read back from the database.

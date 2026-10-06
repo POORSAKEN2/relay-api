@@ -18,4 +18,6 @@ export type RealtimeEvents = {
   'services.updated': { tenantId: string }
   // A homeowner texted in: the inbox refreshes that thread and the unread count.
   'inbox.updated': { contact: string }
+  // The AI or a text-back handled a call: the recovered-revenue numbers change.
+  'call.handled': { callId: string }
 }

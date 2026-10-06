@@ -44,3 +44,7 @@ export function findSession(callId: string): CallSession | undefined {
 export function forgetSession(callId: string) {
   sessions.delete(callId)
 }
+
+export function listSessions(): CallSession[] {
+  return [...sessions.values()]
+}
