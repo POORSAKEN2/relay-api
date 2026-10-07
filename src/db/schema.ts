@@ -616,6 +616,10 @@ export type JobSource = (typeof JOB_SOURCES)[number]
 // Jobs Relay won back for the contractor: a missed-call text, the AI on the phone, or a text
 // to a homeowner who stopped booking. Each one is billed at tenants.per_job_fee_cents.
 export const RECOVERED_JOB_SOURCES = ['text_back', 'ai', 'recovery_text'] as const
+
+// Where the homeowner found the booking page, when it is known: the link on the contractor's
+// Google Business Profile, or the button on their own website (widget.js).
+export const BOOKED_VIA = ['google', 'widget'] as const
 export const SYSTEM_TYPES = [
   'central_ac',
   'heat_pump',
@@ -638,6 +642,7 @@ export const jobs = pgTable(
     callId: uuid('call_id'), // the call it came from (AI, office or text-back)
     status: text('status', { enum: JOB_STATUSES }).notNull().default('held'),
     source: text('source', { enum: JOB_SOURCES }).notNull(),
+    bookedVia: text('booked_via', { enum: BOOKED_VIA }), // null = the plain link, or not known
     priority: boolean('priority').notNull().default(false),
     // The contractor's priority fee when the homeowner chose priority service, copied at the
     // time so a later fee change doesn't rewrite it. 0 = not chosen.
@@ -689,6 +694,7 @@ export const jobs = pgTable(
     }),
     check('jobs_status_valid', oneOf(t.status, JOB_STATUSES)),
     check('jobs_source_valid', oneOf(t.source, JOB_SOURCES)),
+    check('jobs_booked_via_valid', oneOf(t.bookedVia, BOOKED_VIA)),
     check('jobs_system_type_valid', oneOf(t.systemType, SYSTEM_TYPES)),
     check('jobs_window_order', sql`${t.windowEndsAt} > ${t.windowStartsAt}`),
     check('jobs_priority_fee_not_negative', sql`${t.priorityFeeCents} >= 0`),
@@ -814,7 +820,12 @@ export const jobPhotos = pgTable(
   ],
 )
 
-export const WAITLIST_STATUSES = ['waiting', 'offered', 'booked', 'removed'] as const
+// 'removed': texted STOP. 'expired': 14 days passed, or too many offers ran out.
+export const WAITLIST_STATUSES = ['waiting', 'offered', 'booked', 'removed', 'expired'] as const
+// How long a place offered from the waitlist is held, and how many offers may run out before
+// the homeowner is taken off.
+export const WAITLIST_OFFER_MINUTES = 30
+export const WAITLIST_MAX_MISSED = 2
 
 export const waitlistEntries = pgTable(
   'waitlist_entries',
@@ -828,6 +839,20 @@ export const waitlistEntries = pgTable(
     status: text('status', { enum: WAITLIST_STATUSES }).notNull().default('waiting'),
     offeredAt: timestamptz('offered_at'),
     createdAt: createdAt(),
+    // Joined (or joined again) + 14 days. created_at stays, so joining again keeps the place
+    // in line.
+    endsAt: timestamptz('ends_at').notNull().default(sql`now() + interval '14 days'`),
+    // The open offer, set only while status = 'offered'. No foreign key on the window: the
+    // office may delete one in settings, and the offer then just stops working.
+    offerWindowId: uuid('offer_window_id'),
+    offerDate: date('offer_date'),
+    offerWindowStartsAt: timestamptz('offer_window_starts_at'), // matched against jobs.window_starts_at
+    offerExpiresAt: timestamptz('offer_expires_at'),
+    offerLinkHash: text('offer_link_hash').unique(), // sha256 of the link's token
+    offersMissed: smallint('offers_missed').notNull().default(0),
+    // The place of the offer that last ran out, so it goes to the next homeowner in line
+    // instead of straight back to this one.
+    missedWindowStartsAt: timestamptz('missed_window_starts_at'),
   },
   (t) => [
     foreignKey({
@@ -842,9 +867,17 @@ export const waitlistEntries = pgTable(
     }),
     check('waitlist_entries_status_valid', oneOf(t.status, WAITLIST_STATUSES)),
     check('waitlist_entries_zip_format', sql`${t.zip} ~ '^[0-9]{5}$'`),
+    check(
+      'waitlist_entries_offer_complete',
+      sql`(${t.status} = 'offered') = (${t.offerWindowId} is not null and ${t.offerDate} is not null and ${t.offerWindowStartsAt} is not null and ${t.offerExpiresAt} is not null and ${t.offerLinkHash} is not null)`,
+    ),
+    check('waitlist_entries_offers_missed_range', sql`${t.offersMissed} between 0 and 2`),
     index('waitlist_entries_waiting_idx')
       .on(t.tenantId, t.createdAt)
       .where(sql`${t.status} = 'waiting'`),
+    index('waitlist_entries_offered_idx')
+      .on(t.tenantId, t.offerWindowStartsAt)
+      .where(sql`${t.status} = 'offered'`),
   ],
 )
 
@@ -895,6 +928,7 @@ export type DraftAnswers = {
   systemType?: (typeof SYSTEM_TYPES)[number]
   vulnerableOccupant?: boolean
   priorityService?: boolean
+  bookedVia?: (typeof BOOKED_VIA)[number]
   callId?: string // the missed call whose text-back link started this booking
 }
 

@@ -113,6 +113,20 @@
       "when": 1791122241918,
       "tag": "0015_relay_subscription",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1791381261444,
+      "tag": "0016_waitlist_offers",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1791381261445,
+      "tag": "0017_jobs_booked_via",
+      "breakpoints": true
     }
   ]
 }

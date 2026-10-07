@@ -1,7 +1,9 @@
 import { db } from '../../db/client.ts'
+import { tenantUrl } from '../../lib/tenant-url.ts'
 import type { SessionUser } from '../accounts/accounts.service.ts'
 import * as audit from '../audit/audit.queries.ts'
 import { tenantOf } from '../booking/booking.service.ts'
+import { findTenantById } from '../branding/branding.queries.ts'
 import * as queries from './settings.queries.ts'
 
 // Owner and office staff set what online booking charges for priority service and which ZIP
@@ -47,4 +49,17 @@ export async function setServiceArea(user: SessionUser, zips: string[]) {
     )
   })
   return getBookingSettings(tenantId)
+}
+
+// The contractor's booking page, ready to share: the plain link, the link for their Google
+// Business Profile (bookings from it are credited to Google), and the snippet that adds the
+// booking button to their own website. tenantUrl uses their own domain once it is verified.
+export async function getBookingLinks(tenantId: string) {
+  const tenant = await findTenantById(tenantId)
+  if (!tenant) throw new Error(`Contractor ${tenantId} not found`)
+  return {
+    bookingUrl: tenantUrl(tenant, '/'),
+    googleUrl: tenantUrl(tenant, '/?from=google'),
+    widgetSnippet: `<script src="${tenantUrl(tenant, '/widget.js')}" async></script>`,
+  }
 }

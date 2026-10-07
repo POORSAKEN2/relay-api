@@ -6,7 +6,7 @@ import { db } from '../../db/client.ts'
 import { messages, phoneNumbers } from '../../db/schema.ts'
 import { sendEmail } from '../../lib/email.ts'
 import { sendSms } from './httpsms.ts'
-import { sendDueMessages } from './sender.ts'
+import { sendDueMessages, startSender, stopSender } from './sender.ts'
 
 vi.mock('./httpsms.ts', () => ({ sendSms: vi.fn() }))
 vi.mock('../../lib/email.ts', () => ({ sendEmail: vi.fn() }))
@@ -44,6 +44,23 @@ async function queueText(tenantId: string, values: Partial<typeof messages.$infe
     })
     .returning()
   return text
+}
+
+async function queueEmail(tenantId: string) {
+  const [email] = await db
+    .insert(messages)
+    .values({
+      tenantId,
+      channel: 'email',
+      direction: 'outbound',
+      status: 'queued',
+      contact: 'sam@example.com',
+      kind: 'booking_confirmation',
+      subject: 'Your visit is booked: Tue, Jan 8',
+      body: 'Hi Sam',
+    })
+    .returning()
+  return email
 }
 
 async function reload(id: string) {
@@ -138,46 +155,103 @@ it('only logs texts with SMS_PROVIDER=log', async () => {
   expect(await reload(text.id)).toMatchObject({ status: 'sent' })
 })
 
-describe('emails', () => {
-  async function queueEmail(tenantId: string) {
-    return queueText(tenantId, {
-      channel: 'email',
-      contact: 'maria@example.com',
-      kind: 'booking_confirmation',
-      subject: 'Your visit is booked',
-      body: 'Hi Maria',
-    })
+it('sends a due email as the contractor, with replies going to the contractor', async () => {
+  const tenant = await createTenant('desert')
+  const email = await queueEmail(tenant.id)
+  vi.mocked(sendEmail).mockResolvedValue('<abc@gmail.com>')
+
+  expect(await sendDueMessages()).toBe(1)
+
+  expect(sendEmail).toHaveBeenCalledWith({
+    fromName: 'desert HVAC',
+    to: 'sam@example.com',
+    replyTo: 'office@desert.test',
+    subject: 'Your visit is booked: Tue, Jan 8',
+    text: 'Hi Sam',
+  })
+  // No webhook reports back for email: accepted by Gmail is final.
+  expect(await reload(email.id)).toMatchObject({
+    status: 'sent',
+    providerMessageId: '<abc@gmail.com>',
+    attempts: 1,
+  })
+  expect(await sendDueMessages()).toBe(0) // never sent twice
+})
+
+it('tries a failed email again a minute later, and gives up after 3 tries', async () => {
+  const tenant = await createTenant('desert')
+  const email = await queueEmail(tenant.id)
+  vi.mocked(sendEmail).mockRejectedValue(new Error('Connection timeout'))
+
+  await sendDueMessages()
+  expect(await reload(email.id)).toMatchObject({
+    status: 'queued',
+    attempts: 1,
+    lastError: 'Connection timeout',
+  })
+  expect(await sendDueMessages()).toBe(0) // not due yet
+
+  await makeDue(email.id)
+  await sendDueMessages()
+  await makeDue(email.id)
+  await sendDueMessages()
+  expect(await reload(email.id)).toMatchObject({ status: 'failed', attempts: 3 })
+  expect(sendEmail).toHaveBeenCalledTimes(3)
+})
+
+it('sends texts by text and emails by email', async () => {
+  const tenant = await shopWithPhone()
+  const text = await queueText(tenant.id)
+  const email = await queueEmail(tenant.id)
+  vi.mocked(sendSms).mockResolvedValue('httpsms-id-1')
+  vi.mocked(sendEmail).mockResolvedValue('<abc@gmail.com>')
+
+  expect(await sendDueMessages()).toBe(2)
+
+  expect(sendSms).toHaveBeenCalledTimes(1)
+  expect(sendSms).toHaveBeenCalledWith(expect.objectContaining({ requestId: text.id }))
+  expect(sendEmail).toHaveBeenCalledTimes(1)
+  expect(await reload(email.id)).toMatchObject({ status: 'sent' })
+})
+
+it('keeps sending texts while Gmail is stuck on an email', async () => {
+  const tenant = await shopWithPhone()
+  await queueEmail(tenant.id)
+  let answerGmail = (_id: string) => {}
+  vi.mocked(sendEmail).mockReturnValue(new Promise((resolve) => (answerGmail = resolve)))
+  vi.mocked(sendSms).mockResolvedValue('httpsms-id-1')
+
+  startSender()
+  try {
+    await vi.waitFor(() => expect(sendEmail).toHaveBeenCalled())
+    // A missed-call text-back written while the email hangs still leaves within a round.
+    const text = await queueText(tenant.id)
+    await vi.waitFor(
+      async () => expect((await reload(text.id)).providerMessageId).toBe('httpsms-id-1'),
+      { timeout: 8_000, interval: 200 },
+    )
+  } finally {
+    answerGmail('<abc@gmail.com>')
+    await stopSender()
   }
+}, 15_000)
 
-  it('sends a due email and counts it sent', async () => {
-    const tenant = await createTenant('desert')
-    const email = await queueEmail(tenant.id)
+it('fails a message whose last try never finished, and keeps sending the rest', async () => {
+  const tenant = await shopWithPhone()
+  // The process died during this text's 3rd try: still queued, and due again.
+  const stuck = await queueText(tenant.id, { attempts: 3 })
+  const next = await queueText(tenant.id)
+  vi.mocked(sendSms).mockResolvedValue('httpsms-id-1')
 
-    expect(await sendDueMessages()).toBe(1)
+  await sendDueMessages()
 
-    expect(sendEmail).toHaveBeenCalledWith({
-      to: 'maria@example.com',
-      subject: 'Your visit is booked',
-      text: 'Hi Maria',
-    })
-    expect(sendSms).not.toHaveBeenCalled()
-    expect(await reload(email.id)).toMatchObject({ status: 'sent', attempts: 1 })
+  expect(await reload(stuck.id)).toMatchObject({
+    status: 'failed',
+    attempts: 3,
+    lastError: 'Stopped during its last try',
   })
-
-  it('tries a failed email again a minute later, and gives up after 3 tries', async () => {
-    const tenant = await createTenant('desert')
-    const email = await queueEmail(tenant.id)
-    vi.mocked(sendEmail).mockRejectedValue(new Error('SMTP down'))
-
-    await sendDueMessages()
-    expect(await reload(email.id)).toMatchObject({ status: 'queued', lastError: 'SMTP down' })
-
-    await makeDue(email.id)
-    await sendDueMessages()
-    await makeDue(email.id)
-    await sendDueMessages()
-    expect(await reload(email.id)).toMatchObject({ status: 'failed', attempts: 3 })
-  })
+  expect(await reload(next.id)).toMatchObject({ providerMessageId: 'httpsms-id-1' })
+  expect(sendSms).toHaveBeenCalledTimes(1)
 })
 
 describe('quiet hours', () => {

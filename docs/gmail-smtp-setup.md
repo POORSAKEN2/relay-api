@@ -1,6 +1,6 @@
 # Real emails with Gmail SMTP
 
-Relay sends email (owner and office invites) through Gmail's SMTP server. With the default `EMAIL_PROVIDER=log` nothing is sent: each email is printed in the `relay-api` terminal on the line `Development only: the email`.
+Relay sends email (owner and office invites, and homeowners' booking confirmations and visit messages) through Gmail's SMTP server. With the default `EMAIL_PROVIDER=log` nothing is sent: each email is printed in the `relay-api` terminal on the line `Development only: the email`.
 
 ## Set up Gmail
 
@@ -15,10 +15,15 @@ Relay sends email (owner and office invites) through Gmail's SMTP server. With t
    EMAIL_FROM=Relay <you@gmail.com>
    ```
 
-   `SMTP_HOST` (`smtp.gmail.com`) and `SMTP_PORT` (`465`) already default to Gmail.
+   `SMTP_HOST` (`smtp.gmail.com`) and `SMTP_PORT` (`465`) already default to Gmail. The app password may be pasted with Google's spaces (`abcd efgh ijkl mnop`).
 4. Restart the API. It refuses to start if `SMTP_USER`, `SMTP_PASSWORD` or `EMAIL_FROM` is missing.
 
+Emails to homeowners go out under the contractor's name, and replies go to the contractor's contact email, not to the Gmail account. Invites go out as `EMAIL_FROM`.
+
 ## If an email doesn't arrive
+
+Homeowner emails go through the sender loop: look at `select status, attempts, last_error from messages where channel = 'email' order by created_at desc limit 5;`. `failed` after 3 tries means Gmail refused it three times, a minute apart.
+
 
 | Problem | Fix |
 |---|---|

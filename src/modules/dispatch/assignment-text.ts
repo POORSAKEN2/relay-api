@@ -1,15 +1,16 @@
 import { formatDay, formatWindow } from '../../lib/labels.ts'
 
-export type AssignmentChange = 'assigned' | 'changed' | 'removed'
+export type AssignmentChange = 'assigned' | 'changed' | 'removed' | 'cancelled'
 
 const HEADLINES: Record<AssignmentChange, string> = {
   assigned: 'New job',
   changed: 'Job changed',
   removed: 'Job taken off your list',
+  cancelled: 'Job cancelled',
 }
 
-// The technician's text about their assignment. `link` is null for "removed": the job
-// isn't theirs anymore, so a link would only open the expired page.
+// The technician's text about their assignment. `link` is null for "removed" and
+// "cancelled": the job isn't theirs anymore, so a link would only open the expired page.
 export function assignmentText(
   change: AssignmentChange,
   job: {

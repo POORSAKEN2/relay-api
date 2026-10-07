@@ -1,9 +1,10 @@
-import { and, asc, desc, eq, inArray, isNull, lte, ne, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm'
 import { type Db, db } from '../../db/client.ts'
 import {
   calls,
   consentEvents,
   customers,
+  MESSAGE_MAX_ATTEMPTS,
   type MESSAGE_STATUSES,
   messages,
   phoneNumbers,
@@ -59,20 +60,50 @@ export async function findSendingNumber(tenantId: string) {
   return phone?.number
 }
 
-// Takes up to `limit` texts and emails that are due and counts a try on each. Pushing
+// Who an email is from: the contractor's name, with replies going to their own email.
+export async function findEmailSender(tenantId: string) {
+  const [tenant] = await db
+    .select({ name: tenants.name, contactEmail: tenants.contactEmail })
+    .from(tenants)
+    .where(eq(tenants.id, tenantId))
+  return tenant
+}
+
+// Messages the process died sending on their last try: they came back when their lease ran
+// out, but have no try left. Without this they would be claimed forever (and a 4th try breaks
+// the attempts check). Sign-in codes are left to sendText(), which is still sending them.
+export async function failUnfinished(channel: 'sms' | 'email') {
+  await db
+    .update(messages)
+    .set({ status: 'failed', lastError: 'Stopped during its last try' })
+    .where(
+      and(
+        eq(messages.channel, channel),
+        eq(messages.status, 'queued'),
+        isNull(messages.providerMessageId),
+        lte(messages.sendAfter, sql`now()`),
+        ne(messages.kind, 'sign_in_code'),
+        gte(messages.attempts, MESSAGE_MAX_ATTEMPTS),
+      ),
+    )
+}
+
+// Takes up to `limit` texts or emails that are due and counts a try on each. Pushing
 // send_after a minute ahead is the lease: if the process dies mid-send, the message comes back
 // then, and another instance skips rows this one has locked. Sign-in codes are sent by
 // sendText() itself.
-export function claimDueMessages(limit: number) {
+export function claimDue(channel: 'sms' | 'email', limit: number) {
   const due = db
     .select({ id: messages.id })
     .from(messages)
     .where(
       and(
+        eq(messages.channel, channel),
         eq(messages.status, 'queued'),
         isNull(messages.providerMessageId),
         lte(messages.sendAfter, sql`now()`),
         ne(messages.kind, 'sign_in_code'),
+        lt(messages.attempts, MESSAGE_MAX_ATTEMPTS),
       ),
     )
     .orderBy(messages.sendAfter)
@@ -98,7 +129,7 @@ export function claimDueMessages(limit: number) {
 }
 
 // A claimed text that must wait for quiet hours: back to waiting until they end, and the
-// try claimDueMessages counted is given back. Status is left alone, so a STOP that blocked
+// try claimDue counted is given back. Status is left alone, so a STOP that blocked
 // it meanwhile still stands.
 export async function holdUntil(messageId: string, sendAfter: Date) {
   await db
@@ -115,10 +146,17 @@ export async function markHandedOver(messageId: string, providerMessageId: strin
     .where(eq(messages.id, messageId))
 }
 
-// Nothing will report back (an email, or a text under SMS_PROVIDER=log), so it counts as sent
-// at once.
+// Only a text under SMS_PROVIDER=log: nothing will report back, so it counts as sent at once.
 export async function markSent(messageId: string) {
   await db.update(messages).set({ status: 'sent' }).where(eq(messages.id, messageId))
+}
+
+// The email server took it. Email has no webhook, so this is final.
+export async function markEmailSent(messageId: string, providerMessageId: string | null) {
+  await db
+    .update(messages)
+    .set({ status: 'sent', providerMessageId, lastError: null })
+    .where(eq(messages.id, messageId))
 }
 
 export async function recordSendError(messageId: string, error: string) {

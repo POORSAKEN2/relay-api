@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { SYSTEM_TYPES } from '../../db/schema.ts'
+import { BOOKED_VIA, SYSTEM_TYPES } from '../../db/schema.ts'
 import { LocalDate, OptionalEmail, Phone, UsState, Zip } from '../../lib/fields.ts'
 
 // What a homeowner sends from the booking page. Messages are shown next to the field as-is.
@@ -36,6 +36,7 @@ export const DraftAnswersInput = z.object({
     systemType: z.enum(SYSTEM_TYPES).optional(),
     vulnerableOccupant: z.boolean().optional(),
     priorityService: z.boolean().optional(),
+    bookedVia: z.enum(BOOKED_VIA).optional(),
     callId: z.uuid().optional().catch(undefined), // a mangled link id is dropped, never an error
   }),
 })
@@ -70,6 +71,8 @@ export const BookingInput = z.object({
   zip: Zip,
   consent: z.boolean().default(false),
   draftToken: z.string().optional(), // the draft this booking finishes, when there is one
+  offerToken: z.string().max(64).optional(), // the waitlist offer this booking takes
+  bookedVia: z.enum(BOOKED_VIA).optional(), // where the homeowner found the booking page
   // The missed call whose text-back link the homeowner opened. A mangled id is dropped, not an
   // error: a bad link must never stop a booking.
   callId: z.uuid().optional().catch(undefined),
@@ -77,3 +80,10 @@ export const BookingInput = z.object({
 export type BookingInput = z.infer<typeof BookingInput>
 
 export const PhotoParams = z.object({ photoId: z.uuid('That photo link isn’t valid') })
+
+// The manage page: a new arrival window for a booked visit.
+export const RescheduleInput = z.object({
+  date: LocalDate,
+  windowId: z.uuid('Pick an arrival window'),
+})
+export type RescheduleInput = z.infer<typeof RescheduleInput>

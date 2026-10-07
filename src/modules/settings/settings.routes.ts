@@ -12,6 +12,10 @@ settingsRoutes.get('/settings/booking', staff, async (req, res) => {
   res.json(await settings.getBookingSettings(tenantOf(req.user!)))
 })
 
+settingsRoutes.get('/settings/booking-links', staff, async (req, res) => {
+  res.json(await settings.getBookingLinks(tenantOf(req.user!)))
+})
+
 settingsRoutes.put('/settings/priority-fee', staff, async (req, res) => {
   const { priorityFeeCents } = PriorityFeeInput.parse(req.body)
   res.json(await settings.setPriorityFee(req.user!, priorityFeeCents))

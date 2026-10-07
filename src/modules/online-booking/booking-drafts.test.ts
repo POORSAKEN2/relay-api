@@ -154,6 +154,25 @@ describe('POST /api/online-booking/drafts', () => {
 })
 
 describe('GET and PATCH /api/online-booking/drafts/:token', () => {
+  it('credits a booking finished later to where the draft began', async () => {
+    const shop = await createServingShop()
+    const { body } = await call('post', 'drafts').send(draftBody()).expect(201)
+    await call('patch', `drafts/${body.token}`)
+      .send({ answers: { bookedVia: 'google' } })
+      .expect(200)
+    expect((await call('get', `drafts/${body.token}`).expect(200)).body.answers).toEqual({
+      bookedVia: 'google',
+    })
+
+    // The recovery text's link has no ?from=, so the booking doesn't send bookedVia.
+    await call('post', 'bookings')
+      .send(bookingBody(shop, { draftToken: body.token }))
+      .expect(201)
+
+    const [job] = await db.select().from(jobs)
+    expect(job.bookedVia).toBe('google')
+  })
+
   it('saves the answers and gives the draft back', async () => {
     const shop = await createServingShop()
     const { body } = await call('post', 'drafts').send(draftBody()).expect(201)

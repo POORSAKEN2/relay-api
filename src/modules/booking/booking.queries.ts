@@ -1,6 +1,13 @@
-import { and, asc, count, eq, isNull, ne, notInArray, sql } from 'drizzle-orm'
+import { and, asc, count, eq, gt, isNull, ne, notInArray, sql } from 'drizzle-orm'
 import { type Db, db, type Tx } from '../../db/client.ts'
-import { arrivalWindows, consentEvents, jobs, services, tenants } from '../../db/schema.ts'
+import {
+  arrivalWindows,
+  consentEvents,
+  jobs,
+  services,
+  tenants,
+  waitlistEntries,
+} from '../../db/schema.ts'
 
 // Tenant-scoped: every query takes tenantId first.
 
@@ -22,7 +29,7 @@ export function listActiveServices(tenantId: string) {
 
 export async function findActiveService(tenantId: string, serviceId: string, tx: Db = db) {
   const [service] = await tx
-    .select({ id: services.id })
+    .select({ id: services.id, name: services.name })
     .from(services)
     .where(
       and(eq(services.tenantId, tenantId), eq(services.id, serviceId), isNull(services.archivedAt)),
@@ -73,6 +80,29 @@ export async function countActiveJobsAt(
         eq(jobs.windowStartsAt, startsAt),
         notInArray(jobs.status, [...INACTIVE_STATUSES]),
         excludeJobId ? ne(jobs.id, excludeJobId) : undefined,
+      ),
+    )
+  return row.count
+}
+
+// Waitlist offers holding a place in the window that starts at `startsAt`, until they run out.
+// `excludeOfferId`: the homeowner booking from that offer doesn't count against themselves.
+export async function countOpenOffersAt(
+  tenantId: string,
+  startsAt: Date,
+  excludeOfferId: string | undefined,
+  tx: Db = db,
+) {
+  const [row] = await tx
+    .select({ count: count() })
+    .from(waitlistEntries)
+    .where(
+      and(
+        eq(waitlistEntries.tenantId, tenantId),
+        eq(waitlistEntries.status, 'offered'),
+        eq(waitlistEntries.offerWindowStartsAt, startsAt),
+        gt(waitlistEntries.offerExpiresAt, sql`now()`),
+        excludeOfferId ? ne(waitlistEntries.id, excludeOfferId) : undefined,
       ),
     )
   return row.count

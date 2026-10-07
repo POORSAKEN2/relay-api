@@ -36,14 +36,17 @@ function email(visit: Visit, ...paragraphs: string[]): string {
   return [`Hi ${firstName(visit)},`, ...paragraphs, visit.contractorName].join('\n\n')
 }
 
-export function confirmationMessage(visit: Visit): Message {
+// `manageUrl`: the homeowner's link to change or cancel, when the booking made one.
+export function confirmationMessage(visit: Visit, manageUrl?: string): Message {
+  const change = manageUrl ? ` Change or cancel: ${manageUrl}` : ''
   return {
-    text: `${visit.contractorName}: you're booked for ${visit.serviceName} on ${when(visit)}. We'll text you a reminder before the visit. Reply STOP to opt out.`,
+    text: `${visit.contractorName}: you're booked for ${visit.serviceName} on ${when(visit)}. We'll text you a reminder before the visit.${change} Reply STOP to opt out.`,
     subject: `Your visit with ${visit.contractorName} is booked`,
     email: email(
       visit,
       `You're booked for ${visit.serviceName} on ${when(visit)}. Your technician will arrive during that window.`,
       `We'll remind you before the visit.`,
+      ...(manageUrl ? [`Need to change or cancel? ${manageUrl}`] : []),
     ),
   }
 }

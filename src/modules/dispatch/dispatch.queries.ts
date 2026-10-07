@@ -35,7 +35,7 @@ export function localOrNull(column: PgColumn, format: string): SQL<string | null
 
 // The arrival window a job sits in: same weekday and same local start time. A job whose
 // window was changed or removed since booking matches none.
-const matchingWindow = and(
+export const matchingWindow = and(
   eq(arrivalWindows.tenantId, jobs.tenantId),
   sql`${arrivalWindows.weekday} = extract(dow from ${jobs.windowStartsAt} at time zone ${tenants.timezone})`,
   sql`${arrivalWindows.startsAt} = (${jobs.windowStartsAt} at time zone ${tenants.timezone})::time`,
@@ -129,6 +129,7 @@ export async function findJobDetail(tenantId: string, jobId: string) {
       status: jobs.status,
       priority: jobs.priority,
       source: jobs.source,
+      bookedVia: jobs.bookedVia,
       problem: jobs.problem,
       systemType: jobs.systemType,
       vulnerableOccupant: jobs.vulnerableOccupant,
@@ -193,6 +194,7 @@ export async function lockJob(tenantId: string, jobId: string, tx: Tx) {
       id: jobs.id,
       status: jobs.status,
       technicianId: jobs.technicianId,
+      windowStartsAt: jobs.windowStartsAt,
       date: local(jobs.windowStartsAt, 'YYYY-MM-DD'),
       windowId: arrivalWindows.id,
     })

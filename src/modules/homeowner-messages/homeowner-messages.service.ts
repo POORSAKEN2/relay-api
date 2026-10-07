@@ -45,14 +45,20 @@ async function sendToHomeowner(
 }
 
 // Every way of booking calls this once the job and the homeowner's consent are saved.
-export async function sendBookingConfirmation(tenantId: string, jobId: string, tx: Tx) {
+// `manageUrl`: the homeowner's private link to change or cancel, when the booking made one.
+export async function sendBookingConfirmation(
+  tenantId: string,
+  jobId: string,
+  tx: Tx,
+  options: { manageUrl?: string } = {},
+) {
   const visit = await queries.findVisit(tenantId, jobId, tx)
   await sendToHomeowner(
     tenantId,
     jobId,
     visit,
     'booking_confirmation',
-    confirmationMessage(visit),
+    confirmationMessage(visit, options.manageUrl),
     tx,
   )
 }

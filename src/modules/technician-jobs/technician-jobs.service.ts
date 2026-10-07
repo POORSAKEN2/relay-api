@@ -262,7 +262,7 @@ async function changeMyJob(
   await findMyJob(user, jobId)
   await changeStatus({
     tenantId: tenantOf(user),
-    actorUserId: user.id,
+    actor: { userId: user.id },
     jobId,
     to,
     ...extras,

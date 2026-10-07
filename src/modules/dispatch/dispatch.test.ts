@@ -158,6 +158,14 @@ describe('GET /api/dispatch/board', () => {
 })
 
 describe('GET /api/jobs/:jobId', () => {
+  it('says where an online booking came from', async () => {
+    const shop = await createShop('desert')
+    const job = await createJob(shop, { source: 'web', bookedVia: 'google' })
+
+    const res = await request(app).get(`/api/jobs/${job.id}`).set('Cookie', shop.cookie).expect(200)
+    expect(res.body.job).toMatchObject({ source: 'web', bookedVia: 'google' })
+  })
+
   it('returns everything the job drawer shows', async () => {
     const shop = await createShop('desert')
     const job = await createJob(shop, { technicianId: shop.ana.id, vulnerableOccupant: true })

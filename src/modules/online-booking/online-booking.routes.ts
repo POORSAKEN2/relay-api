@@ -3,16 +3,19 @@ import { rateLimit } from 'express-rate-limit'
 import { HttpError } from '../../lib/http-error.ts'
 import { sendPhoto } from '../../lib/send-photo.ts'
 import { tenantFromHost } from '../../middleware/tenant.ts'
+import * as manage from './manage.service.ts'
 import {
   BookingInput,
   CallbackInput,
   DraftAnswersInput,
   DraftInput,
   PhotoParams,
+  RescheduleInput,
   WaitlistInput,
   ZipParams,
 } from './online-booking.schemas.ts'
 import * as onlineBooking from './online-booking.service.ts'
+import * as waitlistOffers from './waitlist.service.ts'
 
 // The public booking page. No sign-in: the contractor comes from the web address.
 export const onlineBookingRoutes = Router()
@@ -48,7 +51,8 @@ onlineBookingRoutes.get('/online-booking/service-area/:zip', tenantFromHost, asy
 })
 
 onlineBookingRoutes.get('/online-booking/windows', tenantFromHost, async (req, res) => {
-  res.json(await onlineBooking.listOpenWindows(req.tenant!.id))
+  const offer = typeof req.query.offer === 'string' ? req.query.offer : undefined
+  res.json(await onlineBooking.listOpenWindows(req.tenant!.id, offer))
 })
 
 onlineBookingRoutes.post(
@@ -152,5 +156,44 @@ onlineBookingRoutes.post(
   async (req, res) => {
     const input = BookingInput.parse(req.body)
     res.status(201).json(await onlineBooking.bookVisit(req.tenant!, input, req.ip ?? null))
+  },
+)
+
+// The link in a waitlist offer text: the place held for this homeowner.
+onlineBookingRoutes.get(
+  '/online-booking/offers/:token',
+  formLimit,
+  tenantFromHost,
+  async (req, res) => {
+    res.json(await waitlistOffers.getOffer(req.tenant!, String(req.params.token)))
+  },
+)
+
+// The homeowner's link from their confirmation: see, move or cancel the visit.
+onlineBookingRoutes.get(
+  '/online-booking/manage/:token',
+  formLimit,
+  tenantFromHost,
+  async (req, res) => {
+    res.json(await manage.getVisit(req.tenant!, String(req.params.token)))
+  },
+)
+
+onlineBookingRoutes.post(
+  '/online-booking/manage/:token/reschedule',
+  formLimit,
+  tenantFromHost,
+  async (req, res) => {
+    const input = RescheduleInput.parse(req.body)
+    res.json(await manage.rescheduleVisit(req.tenant!, String(req.params.token), input))
+  },
+)
+
+onlineBookingRoutes.post(
+  '/online-booking/manage/:token/cancel',
+  formLimit,
+  tenantFromHost,
+  async (req, res) => {
+    res.json(await manage.cancelVisit(req.tenant!, String(req.params.token)))
   },
 )

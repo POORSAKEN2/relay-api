@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { type Db, db, type Tx } from '../../db/client.ts'
 import {
+  type BOOKED_VIA,
   BOOKING_PHOTO_MAX_BYTES,
   type DraftAnswers,
   MAX_BOOKING_PHOTOS,
@@ -9,6 +10,7 @@ import {
 import { HttpError } from '../../lib/http-error.ts'
 import { photoTypeOf } from '../../lib/image-type.ts'
 import { formatDay, formatWindow } from '../../lib/labels.ts'
+import { newLinkToken } from '../../lib/link-token.ts'
 import { tenantUrl } from '../../lib/tenant-url.ts'
 import * as audit from '../audit/audit.queries.ts'
 import * as booking from '../booking/booking.queries.ts'
@@ -25,6 +27,8 @@ import type {
   DraftInput,
   WaitlistInput,
 } from './online-booking.schemas.ts'
+import * as waitlist from './waitlist.queries.ts'
+import * as waitlistOffers from './waitlist.service.ts'
 
 // The homeowner's side of booking (flow A). Nobody is signed in: the contractor comes from
 // the web address. Steps 1 to 6 end with a booked visit; the homeowner pays at the visit.
@@ -69,9 +73,11 @@ export async function checkZip(tenantId: string, zip: string) {
   return { zip, served: await zipIsServed(tenantId, zip) }
 }
 
-// Step 5: open arrival windows for the next two weeks, grouped by day.
-export async function listOpenWindows(tenantId: string) {
-  const rows = await queries.listOpenWindows(tenantId, DAYS_AHEAD)
+// Step 5: open arrival windows for the next two weeks, grouped by day. With a waitlist offer's
+// token, the place held for that homeowner shows as open.
+export async function listOpenWindows(tenantId: string, offerToken?: string) {
+  const offerId = await waitlistOffers.findOpenOfferId(tenantId, offerToken)
+  const rows = await queries.listOpenWindows(tenantId, DAYS_AHEAD, offerId)
   const days: { date: string; label: string; windows: { id: string; label: string }[] }[] = []
   for (const row of rows) {
     // Rows come sorted by day, so a new date always starts a new group.
@@ -217,16 +223,14 @@ export async function joinWaitlist(tenantId: string, input: WaitlistInput, ip: s
   await db.transaction(async (tx) => {
     await checkServiceAndZip(tenantId, input.serviceId, input.zip, tx)
     const customer = await findOrAddCustomer(tenantId, input, tx)
-    await queries.insertWaitlistEntry(
-      tenantId,
-      {
-        customerId: customer.id,
-        serviceId: input.serviceId,
-        zip: input.zip,
-        priority: input.vulnerableOccupant,
-      },
-      tx,
-    )
+    const values = { zip: input.zip, priority: input.vulnerableOccupant }
+    if (!(await waitlist.renewOpenEntry(tenantId, customer.id, input.serviceId, values, tx))) {
+      await queries.insertWaitlistEntry(
+        tenantId,
+        { customerId: customer.id, serviceId: input.serviceId, ...values },
+        tx,
+      )
+    }
     await booking.insertConsent(
       tenantId,
       {
@@ -251,6 +255,7 @@ export type BookingOrigin = {
   // said no on the phone), so nothing is recorded and the confirmation text is blocked.
   consent: { source: 'booking_form' | 'call'; wording: string } | null
   draftId?: string // the web draft this booking finishes
+  bookedVia?: (typeof BOOKED_VIA)[number] // web form only: where the homeowner found the page
 }
 
 // Step 6: the web form's booking. A booking from a missed-call text counts as recovered; any
@@ -270,6 +275,8 @@ export async function bookVisit(tenant: Tenant, input: BookingInput, ip: string 
     ip,
     consent: input.consent ? { source: 'booking_form', wording: CONSENT_WORDING } : null,
     draftId: draft?.id,
+    // A link's ?from= wins; a booking finished from a draft keeps where the draft began.
+    bookedVia: input.bookedVia ?? draft?.answers.bookedVia,
   })
 }
 
@@ -284,11 +291,21 @@ export async function bookHomeownerVisit(
 ) {
   // The fee applies only when the contractor offers priority service and the homeowner chose it.
   const priorityFeeCents = input.priorityService ? tenant.priorityFeeCents : 0
+  // The homeowner's private link to change or cancel; only its hash is stored.
+  const manageLink = newLinkToken()
 
   const job = await db.transaction(async (tx) => {
     await checkServiceAndZip(tenant.id, input.serviceId, input.zip, tx)
-    const slot = await reserveOpenWindow(tx, tenant.id, input.windowId, input.date)
-
+    // A place held for this homeowner from the waitlist doesn't count against them.
+    const offerId = await waitlistOffers.findOpenOfferId(tenant.id, input.offerToken, tx)
+    const slot = await reserveOpenWindow(
+      tx,
+      tenant.id,
+      input.windowId,
+      input.date,
+      undefined,
+      offerId,
+    )
     const customer = await findOrAddCustomer(tenant.id, input, tx)
     const property =
       (await customers.findPropertyAt(tenant.id, customer.id, input, tx)) ??
@@ -315,11 +332,13 @@ export async function bookHomeownerVisit(
         bookedAt: new Date(),
         source: origin.source,
         callId: origin.callId,
+        bookedVia: origin.bookedVia ?? null,
         priority: input.vulnerableOccupant || priorityFeeCents > 0,
         priorityFeeCents,
         problem: input.problem,
         systemType: input.systemType,
         vulnerableOccupant: input.vulnerableOccupant,
+        manageLinkHash: manageLink.hash,
         ...slot,
       },
       tx,
@@ -347,9 +366,12 @@ export async function bookHomeownerVisit(
         )
       }
     }
-    await sendBookingConfirmation(tenant.id, job.id, tx)
+    await sendBookingConfirmation(tenant.id, job.id, tx, {
+      manageUrl: tenantUrl(tenant, `/manage/${manageLink.token}`),
+    })
     // The booking this draft was for is made.
     if (origin.draftId) await queries.markDraftBooked(tenant.id, origin.draftId, job.id, tx)
+    if (offerId) await waitlist.markOfferBooked(tenant.id, offerId, tx)
 
     const event = {
       action: 'job.booked',
@@ -413,10 +435,10 @@ function bookingLink(
 }
 
 async function checkServiceAndZip(tenantId: string, serviceId: string, zip: string, tx: Db) {
-  if (!(await booking.findActiveService(tenantId, serviceId, tx))) {
-    throw new HttpError(404, 'not_found', SERVICE_GONE)
-  }
+  const service = await booking.findActiveService(tenantId, serviceId, tx)
+  if (!service) throw new HttpError(404, 'not_found', SERVICE_GONE)
   await checkZipServed(tenantId, zip, tx)
+  return service
 }
 
 async function checkZipServed(tenantId: string, zip: string, tx: Db = db) {
@@ -449,10 +471,23 @@ async function recordConsent(
 
 // Takes a place in the window like the office does, but never over the cap, never in a window
 // that already started, and without telling a homeowner how many jobs are booked.
-async function reserveOpenWindow(tx: Tx, tenantId: string, windowId: string, date: string) {
+// `excludeJobId`: a visit being moved doesn't count against its own new window.
+// `excludeOfferId`: nor does a place held for the homeowner booking from that offer.
+export async function reserveOpenWindow(
+  tx: Tx,
+  tenantId: string,
+  windowId: string,
+  date: string,
+  excludeJobId?: string,
+  excludeOfferId?: string,
+) {
   let slot: Awaited<ReturnType<typeof reserveWindow>>
   try {
-    slot = await reserveWindow(tx, tenantId, windowId, date, { allowOverCap: false })
+    slot = await reserveWindow(tx, tenantId, windowId, date, {
+      allowOverCap: false,
+      excludeJobId,
+      excludeOfferId,
+    })
   } catch (error) {
     if (error instanceof HttpError && error.code === 'window_full') {
       throw new HttpError(

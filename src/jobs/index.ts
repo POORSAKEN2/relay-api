@@ -4,6 +4,7 @@ import * as accounts from '../modules/accounts/accounts.service.ts'
 import * as billing from '../modules/billing/billing.service.ts'
 import * as homeownerMessages from '../modules/homeowner-messages/homeowner-messages.service.ts'
 import * as onlineBooking from '../modules/online-booking/online-booking.service.ts'
+import * as waitlist from '../modules/online-booking/waitlist.service.ts'
 import { wrapUpCall } from '../modules/receptionist/wrap-up.ts'
 import { boss } from './boss.ts'
 
@@ -25,6 +26,12 @@ export async function startJobs() {
   await register('booking-recovery', { cron: '*/5 * * * *' }, async () => {
     const texted = await onlineBooking.sendRecoveryTexts()
     if (texted > 0) logger.info({ texted }, 'Booking recovery texts saved')
+  })
+
+  // Every minute: a place that opened goes to the next homeowner on the waitlist.
+  await register('waitlist-offers', { cron: '* * * * *' }, async () => {
+    const { offered, expired } = await waitlist.sendWaitlistOffers()
+    if (offered > 0 || expired > 0) logger.info({ offered, expired }, 'Waitlist offers made')
   })
 
   // Every 5 minutes: homeowners are reminded of their visit a day and two hours before it.

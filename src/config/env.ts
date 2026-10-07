@@ -22,8 +22,13 @@ const EnvSchema = z
     SMTP_HOST: z.string().min(1).default('smtp.gmail.com'),
     SMTP_PORT: z.coerce.number().int().positive().default(465),
     // For Gmail: the address, and a 16-character app password (not the account password).
+    // Google shows the password in groups of four with spaces; they don't count.
     SMTP_USER: z.string().min(1).optional(),
-    SMTP_PASSWORD: z.string().min(1).optional(),
+    SMTP_PASSWORD: z
+      .string()
+      .transform((value) => value.replace(/\s/g, ''))
+      .pipe(z.string().min(1))
+      .optional(),
     // The From header, for example 'Relay <you@gmail.com>'. Gmail rewrites it to SMTP_USER.
     EMAIL_FROM: z.string().min(1).optional(),
     // Phone calls (Telnyx). The API key sends call commands; the public key (base64, from the

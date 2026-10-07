@@ -20,6 +20,7 @@ import { exportRoutes } from './modules/export/export.routes.ts'
 import { inboxRoutes } from './modules/inbox/inbox.routes.ts'
 import { webhooksRoutes } from './modules/messaging/webhooks.routes.ts'
 import { onlineBookingRoutes } from './modules/online-booking/online-booking.routes.ts'
+import { widgetRoutes } from './modules/online-booking/widget.routes.ts'
 import { receptionistRoutes } from './modules/receptionist/receptionist.routes.ts'
 import { settingsRoutes } from './modules/settings/settings.routes.ts'
 import { staffRoutes } from './modules/team/staff.routes.ts'
@@ -44,6 +45,8 @@ export function createApp() {
       },
     }),
   )
+  // Before the cookie CORS below: any website may ask for the booking button's look.
+  app.use(widgetRoutes)
   app.use(cors({ origin: checkOrigin, credentials: true, maxAge: 600 }))
   // A spreadsheet import sends up to 5,000 rows at once; every other route keeps the default
   // limit. The default parser below skips bodies this one already read.

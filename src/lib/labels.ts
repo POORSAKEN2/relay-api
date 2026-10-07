@@ -44,6 +44,12 @@ export function formatWindow(startsAt: string, endsAt: string): string {
   return `${formatTime(startsAt)}–${formatTime(endsAt)}`
 }
 
+// '8 AM - 12 PM', for a text. formatWindow's en dash would switch the whole text to Unicode,
+// which halves how much fits in one SMS.
+export function textWindow(startsAt: Date, endsAt: Date, timezone: string): string {
+  return `${formatClock(startsAt, timezone)} - ${formatClock(endsAt, timezone)}`
+}
+
 // '2030-01-08' → 'Tue, Jan 8'
 export function formatDay(date: string): string {
   return dayFormat.format(new Date(`${date}T00:00:00Z`))
@@ -90,4 +96,14 @@ const STATUS_LABELS: Record<string, string> = {
 // 'en_route' → 'en route'
 export function statusLabel(status: string): string {
   return STATUS_LABELS[status] ?? status
+}
+
+// '+639171234567' → '0917 123 4567', '+14805550100' → '(480) 555-0100'. Same as the web
+// app's formatPhone. Any other number is shown as stored.
+export function formatPhone(phone: string): string {
+  const ph = /^\+63(9\d{2})(\d{3})(\d{4})$/.exec(phone)
+  if (ph) return `0${ph[1]} ${ph[2]} ${ph[3]}`
+  const us = /^\+1(\d{3})(\d{3})(\d{4})$/.exec(phone)
+  if (us) return `(${us[1]}) ${us[2]}-${us[3]}`
+  return phone
 }

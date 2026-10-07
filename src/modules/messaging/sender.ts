@@ -15,13 +15,15 @@ import { TEXT_RULES } from './rules.ts'
 // again just before sending.
 
 const ROUND_MS = 5_000
-const MESSAGES_PER_ROUND = 20
+const PER_ROUND = 20
+// One email per round: each can take about 30 seconds when the server is slow, and the claim's
+// 1-minute lease must not run out while it waits. Still about 10 a minute, plenty for Gmail.
+const EMAILS_PER_ROUND = 1
 
 export type OutgoingText = { id: string; tenantId: string; contact: string; body: string }
-type OutgoingEmail = { id: string; contact: string; subject: string | null; body: string }
 
 // Hands one text to the provider and records what happened. On a failure the text is tried
-// again a minute later (claimDueMessages pushed it), unless this was its last try.
+// again a minute later (claimDue pushed it), unless this was its last try.
 export async function deliver(text: OutgoingText, lastTry: boolean) {
   if (env.SMS_PROVIDER === 'log') {
     logger.info({ messageId: text.id }, 'Text logged, not sent (SMS_PROVIDER=log)')
@@ -54,11 +56,27 @@ export async function deliver(text: OutgoingText, lastTry: boolean) {
   }
 }
 
-// Hands one email to the SMTP server. Failures are retried like a text's.
-async function deliverEmail(email: OutgoingEmail, lastTry: boolean) {
+export type OutgoingEmail = {
+  id: string
+  tenantId: string
+  contact: string
+  subject: string
+  body: string
+}
+
+// Hands one email to the SMTP server (sendEmail only logs it with EMAIL_PROVIDER=log), as
+// the contractor. Failures are retried like texts.
+export async function deliverEmail(email: OutgoingEmail, lastTry: boolean) {
   try {
-    await sendEmail({ to: email.contact, subject: email.subject ?? '', text: email.body })
-    await queries.markSent(email.id)
+    const sender = await queries.findEmailSender(email.tenantId)
+    const providerId = await sendEmail({
+      fromName: sender.name,
+      to: email.contact,
+      replyTo: sender.contactEmail,
+      subject: email.subject,
+      text: email.body,
+    })
+    await queries.markEmailSent(email.id, providerId ?? null)
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error)
     logger.warn({ err: error, messageId: email.id, lastTry }, 'Email not sent')
@@ -67,34 +85,55 @@ async function deliverEmail(email: OutgoingEmail, lastTry: boolean) {
   }
 }
 
-// One round: claims the due texts and emails and sends them one by one. Returns how many it
-// took.
+// One round: claims the due texts and sends them one by one, then the same for emails.
+// Returns how many it took.
 export async function sendDueMessages() {
-  const due = await queries.claimDueMessages(MESSAGES_PER_ROUND)
-  for (const message of due) {
+  return (await sendDueTexts()) + (await sendDueEmails())
+}
+
+export async function sendDueTexts() {
+  await queries.failUnfinished('sms')
+  const texts = await queries.claimDue('sms', PER_ROUND)
+  for (const text of texts) {
     // Checked again here, not only when the text was saved: one saved at 20:45 must not go
     // out at 23:00 because the server or the phone was down, or a retry crossed 21:00.
-    if (message.channel === 'sms' && TEXT_RULES[message.kind].quietHours) {
-      const until = await endOfQuietHours(message.tenantId)
+    if (TEXT_RULES[text.kind].quietHours) {
+      const until = await endOfQuietHours(text.tenantId)
       if (until) {
-        await queries.holdUntil(message.id, until)
+        await queries.holdUntil(text.id, until)
         continue
       }
     }
-    const lastTry = message.attempts >= MESSAGE_MAX_ATTEMPTS
-    if (message.channel === 'email') await deliverEmail(message, lastTry)
-    else await deliver(message, lastTry)
+    await deliver(text, text.attempts >= MESSAGE_MAX_ATTEMPTS)
   }
-  return due.length
+  return texts.length
 }
 
+export async function sendDueEmails() {
+  await queries.failUnfinished('email')
+  const emails = await queries.claimDue('email', EMAILS_PER_ROUND)
+  for (const email of emails) {
+    await deliverEmail(
+      { ...email, subject: email.subject ?? '' },
+      email.attempts >= MESSAGE_MAX_ATTEMPTS,
+    )
+  }
+  return emails.length
+}
+
+// Texts and emails each get their own loop, so a slow or unreachable email server never holds
+// up a text-back.
+type Loop = { send: () => Promise<number>; timer?: NodeJS.Timeout; round: Promise<void> }
+const loops: Loop[] = [
+  { send: sendDueTexts, round: Promise.resolve() },
+  { send: sendDueEmails, round: Promise.resolve() },
+]
 let running = false
-let timer: NodeJS.Timeout | undefined
-let round: Promise<void> = Promise.resolve()
 
 // The next round starts 5 seconds after this one ends, so two never overlap.
-function nextRound() {
-  round = sendDueMessages()
+function nextRound(loop: Loop) {
+  loop.round = loop
+    .send()
     .then(
       () => undefined,
       (error) => {
@@ -103,18 +142,18 @@ function nextRound() {
       },
     )
     .then(() => {
-      if (running) timer = setTimeout(nextRound, ROUND_MS)
+      if (running) loop.timer = setTimeout(() => nextRound(loop), ROUND_MS)
     })
 }
 
 export function startSender() {
   running = true
-  nextRound()
+  for (const loop of loops) nextRound(loop)
 }
 
-// Lets the round in flight finish, so no text is left half-sent.
+// Lets the rounds in flight finish, so no message is left half-sent.
 export async function stopSender() {
   running = false
-  clearTimeout(timer)
-  await round
+  for (const loop of loops) clearTimeout(loop.timer)
+  await Promise.all(loops.map((loop) => loop.round))
 }

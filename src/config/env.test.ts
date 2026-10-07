@@ -62,6 +62,12 @@ it('needs the Gmail login and sender to send real emails', () => {
   expect(parseEnv({ ...required, EMAIL_PROVIDER: 'smtp', ...login }).EMAIL_PROVIDER).toBe('smtp')
 })
 
+it('takes the app password as Google shows it, with spaces', () => {
+  expect(parseEnv({ ...required, SMTP_PASSWORD: 'abcd efgh ijkl mnop' }).SMTP_PASSWORD).toBe(
+    'abcdefghijklmnop',
+  )
+})
+
 it('needs the chosen language model provider’s key', () => {
   expect(() => parseEnv({ ...required, LLM_PROVIDER: 'groq' })).toThrow(/GROQ_API_KEY/)
   expect(() => parseEnv({ ...required, LLM_PROVIDER: 'anthropic' })).toThrow(/ANTHROPIC_API_KEY/)

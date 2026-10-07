@@ -33,7 +33,8 @@ export function listServices(tenantId: string) {
 // Arrival windows a homeowner can still take on the contractor's next `days` local days:
 // not started yet, and with a place left. Soonest first.
 // 'cancelled' and 'expired' jobs hold no place (INACTIVE_STATUSES in booking.queries.ts).
-export async function listOpenWindows(tenantId: string, days: number) {
+// `offerId`: the homeowner holding that waitlist offer sees its place as open.
+export async function listOpenWindows(tenantId: string, days: number, offerId?: string) {
   const result = await db.execute<{ date: string; id: string; startsAt: string; endsAt: string }>(
     sql`
       select to_char(d.day, 'YYYY-MM-DD') as "date", w.id, w.starts_at as "startsAt", w.ends_at as "endsAt"
@@ -48,6 +49,13 @@ export async function listOpenWindows(tenantId: string, days: number) {
           where j.tenant_id = t.id
             and j.window_starts_at = (d.day + w.starts_at) at time zone t.timezone
             and j.status not in ('cancelled', 'expired')
+        ) + (
+          select count(*) from waitlist_entries o
+          where o.tenant_id = t.id
+            and o.status = 'offered'
+            and o.offer_window_starts_at = (d.day + w.starts_at) at time zone t.timezone
+            and o.offer_expires_at > now()
+            ${offerId ? sql`and o.id <> ${offerId}` : sql``}
         )
       order by d.day, w.starts_at
     `,

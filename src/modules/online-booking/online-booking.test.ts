@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { eq } from 'drizzle-orm'
+import { asc, eq } from 'drizzle-orm'
 import request from 'supertest'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createJob, createShop, resetDb, type Shop, TUESDAY } from '../../../test/helpers.ts'
@@ -23,6 +23,7 @@ import {
   waitlistEntries,
 } from '../../db/schema.ts'
 import { weekdayOf } from '../../lib/labels.ts'
+import { hashLinkToken } from '../../lib/link-token.ts'
 import { emitToTenant } from '../../realtime/index.ts'
 import { BookingInput } from './online-booking.schemas.ts'
 import {
@@ -184,6 +185,24 @@ describe('GET /api/online-booking/windows', () => {
 })
 
 describe('POST /api/online-booking/bookings', () => {
+  it('remembers where the homeowner found the booking page', async () => {
+    const shop = await createServingShop()
+    await post('bookings', bookingBody(shop, { bookedVia: 'google' })).expect(201)
+    await post('bookings', bookingBody(shop, { bookedVia: 'widget' })).expect(201)
+    await post('bookings', bookingBody(shop, { windowId: shop.tueAfternoon.id })).expect(201)
+
+    const booked = await db.select({ bookedVia: jobs.bookedVia }).from(jobs)
+    expect(new Set(booked.map((job) => job.bookedVia))).toEqual(new Set(['google', 'widget', null]))
+  })
+
+  it('refuses a bookedVia it doesn’t know', async () => {
+    const shop = await createServingShop()
+
+    const res = await post('bookings', bookingBody(shop, { bookedVia: 'facebook' })).expect(400)
+    expect(res.body.error.code).toBe('validation_failed')
+    expect(await db.select().from(jobs)).toEqual([])
+  })
+
   it('books the window and saves the homeowner, their address and their consent', async () => {
     const shop = await createServingShop()
 
@@ -397,6 +416,67 @@ describe('POST /api/online-booking/bookings', () => {
       code: 'window_full',
       message: 'That arrival window just filled up. Pick another one.',
     })
+    // The refused booking saved no confirmation: only the two booked ones have theirs.
+    expect(await db.select().from(messages)).toHaveLength(4)
+  })
+
+  it('texts and emails the homeowner a confirmation', async () => {
+    const shop = await createServingShop()
+
+    const res = await post('bookings', bookingBody(shop)).expect(201)
+
+    // 'email' sorts before 'sms'.
+    const sent = await db.select().from(messages).orderBy(asc(messages.channel))
+    expect(sent).toEqual([
+      expect.objectContaining({
+        channel: 'email',
+        kind: 'booking_confirmation',
+        status: 'queued',
+        contact: 'sam@example.com',
+        subject: 'Your visit with desert HVAC is booked',
+        jobId: res.body.jobId,
+      }),
+      expect.objectContaining({
+        channel: 'sms',
+        kind: 'booking_confirmation',
+        status: 'queued',
+        contact: '+14805550199',
+        body: expect.stringMatching(
+          /^desert HVAC: you're booked for AC repair on Tue, Jan 8, 8 AM-12 PM\. We'll text you a reminder before the visit\. Change or cancel: https:\/\/desert\.localhost\/manage\/[\w-]{24} Reply STOP to opt out\.$/,
+        ),
+        jobId: res.body.jobId,
+      }),
+    ])
+    expect(sent[0].customerId).toBe(sent[1].customerId)
+  })
+
+  it('gives the visit a private link to change or cancel it', async () => {
+    const shop = await createServingShop()
+
+    const res = await post('bookings', bookingBody(shop)).expect(201)
+
+    const [job] = await db.select().from(jobs).where(eq(jobs.id, res.body.jobId))
+    const sent = await db.select().from(messages).orderBy(asc(messages.channel))
+    const url = /https:\/\/desert\.localhost\/manage\/([\w-]{24})/.exec(sent[1].body)
+    expect(url).not.toBeNull()
+    // Only the hash is stored.
+    expect(job.manageLinkHash).toBe(hashLinkToken(url![1]))
+    expect(sent[0].body).toContain(`Need to change or cancel? ${url![0]}`)
+  })
+
+  it('keeps the text from someone who didn’t agree to texts, and skips a blank email', async () => {
+    const shop = await createServingShop()
+
+    await post('bookings', bookingBody(shop, { consent: false, email: '' })).expect(201)
+
+    expect(await db.select().from(messages)).toEqual([
+      expect.objectContaining({
+        channel: 'sms',
+        kind: 'booking_confirmation',
+        status: 'blocked',
+        blockedReason: 'no_consent',
+      }),
+    ])
   })
 
   it('refuses a date in the past', async () => {

@@ -44,6 +44,13 @@ it('greets the homeowner by first name and signs with the contractor’s name', 
 })
 
 it('confirms the visit with its day and arrival window', () => {
+  const manageUrl = 'https://desert.example/manage/abc'
+  expect(confirmationMessage(visit, manageUrl).text).toBe(
+    "Desert Breeze Air: you're booked for AC repair on Tue, Jan 8, 8 AM-12 PM. We'll text you a reminder before the visit. Change or cancel: https://desert.example/manage/abc Reply STOP to opt out.",
+  )
+  expect(confirmationMessage(visit, manageUrl).email).toContain(
+    'Need to change or cancel? https://desert.example/manage/abc',
+  )
   expect(confirmationMessage(visit).text).toBe(
     "Desert Breeze Air: you're booked for AC repair on Tue, Jan 8, 8 AM-12 PM. We'll text you a reminder before the visit. Reply STOP to opt out.",
   )

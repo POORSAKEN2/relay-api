@@ -107,7 +107,7 @@ describe('when the office marks a job done', () => {
     const job = await createJob(shop, { technicianId: shop.mike.id, status: 'in_progress' })
     await changeStatus({
       tenantId: shop.tenant.id,
-      actorUserId: shop.office.id,
+      actor: { userId: shop.office.id },
       jobId: job.id,
       to: 'done',
     })
