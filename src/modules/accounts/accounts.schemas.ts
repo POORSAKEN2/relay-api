@@ -9,6 +9,8 @@ export const SignInInput = z.object({
 // Technicians type their mobile number in any US format.
 export const PhoneCodeInput = z.object({ phone: Phone })
 
+export const LinkSignInInput = z.object({ token: z.string().min(1).max(200) })
+
 export const PhoneSignInInput = z.object({
   phone: Phone,
   code: z

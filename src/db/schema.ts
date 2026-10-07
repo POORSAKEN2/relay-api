@@ -49,6 +49,9 @@ function e164(column: Column) {
 
 export const PAYMENT_PROVIDERS = ['xendit', 'stripe'] as const
 
+// Relay's own subscription, kept in step by RevenueCat's webhook (billing module).
+export const SUBSCRIPTION_STATUSES = ['none', 'active', 'billing_issue', 'expired'] as const
+
 // =====================================================================
 // 1 · White-label setup   13 · Ownership and accounts
 // =====================================================================
@@ -91,6 +94,12 @@ export const tenants = pgTable(
     // Relay billing
     monthlyFeeCents: integer('monthly_fee_cents').notNull().default(0),
     perJobFeeCents: integer('per_job_fee_cents').notNull().default(0), // per recovered job
+    // Relay subscription (RevenueCat). The event time lets a late webhook be ignored.
+    subscriptionStatus: text('subscription_status', { enum: SUBSCRIPTION_STATUSES })
+      .notNull()
+      .default('none'),
+    subscriptionExpiresAt: timestamptz('subscription_expires_at'),
+    subscriptionEventAt: timestamptz('subscription_event_at'),
     createdAt: createdAt(),
   },
   (t) => [
@@ -109,6 +118,7 @@ export const tenants = pgTable(
     check('tenants_quiet_hours_window', sql`${t.quietHoursStart} <> ${t.quietHoursEnd}`),
     check('tenants_payment_provider_valid', oneOf(t.paymentProvider, PAYMENT_PROVIDERS)),
     check('tenants_fees_not_negative', sql`${t.monthlyFeeCents} >= 0 and ${t.perJobFeeCents} >= 0`),
+    check('tenants_subscription_status_valid', oneOf(t.subscriptionStatus, SUBSCRIPTION_STATUSES)),
   ],
 )
 
@@ -180,6 +190,23 @@ export const signInCodes = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index('sign_in_codes_user_id_idx').on(t.userId)],
+)
+
+// A one-time sign-in link emailed to an owner or office user: the invite, or a new link later.
+// Only the hash is kept, like sessions.
+export const signInLinks = pgTable(
+  'sign_in_links',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull().unique(), // sha256 of the token in the emailed link
+    expiresAt: timestamptz('expires_at').notNull(),
+    usedAt: timestamptz('used_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [index('sign_in_links_user_id_idx').on(t.userId)],
 )
 
 export const PROFILE_PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const
@@ -301,6 +328,8 @@ export const phoneNumbers = pgTable(
 // Also used by contractor invoices (module 9).
 export const INVOICE_STATUSES = ['open', 'paid', 'void'] as const
 
+// One per contractor per month, for the recovered jobs (billing module). period_end is the
+// first day after the month.
 export const subscriptionInvoices = pgTable(
   'subscription_invoices',
   {
@@ -308,7 +337,7 @@ export const subscriptionInvoices = pgTable(
     tenantId: tenantId(),
     periodStart: date('period_start').notNull(),
     periodEnd: date('period_end').notNull(),
-    monthlyFeeCents: integer('monthly_fee_cents').notNull(),
+    monthlyFeeCents: integer('monthly_fee_cents').notNull(), // 0 while RevenueCat collects it
     recoveredJobs: integer('recovered_jobs').notNull(), // metered count, frozen when the invoice is made
     perJobFeeCents: integer('per_job_fee_cents').notNull(),
     totalCents: integer('total_cents').notNull(),
@@ -583,6 +612,10 @@ export const JOB_STATUSES = [
 ] as const
 // Feeds the recovered-revenue dashboard and the per-job fee.
 export const JOB_SOURCES = ['web', 'text_back', 'ai', 'recovery_text', 'office'] as const
+export type JobSource = (typeof JOB_SOURCES)[number]
+// Jobs Relay won back for the contractor: a missed-call text, the AI on the phone, or a text
+// to a homeowner who stopped booking. Each one is billed at tenants.per_job_fee_cents.
+export const RECOVERED_JOB_SOURCES = ['text_back', 'ai', 'recovery_text'] as const
 
 // Where the homeowner found the booking page, when it is known: the link on the contractor's
 // Google Business Profile, or the button on their own website (widget.js).
@@ -896,6 +929,7 @@ export type DraftAnswers = {
   vulnerableOccupant?: boolean
   priorityService?: boolean
   bookedVia?: (typeof BOOKED_VIA)[number]
+  callId?: string // the missed call whose text-back link started this booking
 }
 
 // An online booking somebody started and hasn't finished. Saved once they give a name and
@@ -1327,7 +1361,7 @@ export const auditEvents = pgTable(
   ],
 )
 
-export const WEBHOOK_PROVIDERS = ['twilio', 'xendit', 'stripe', 'httpsms'] as const
+export const WEBHOOK_PROVIDERS = ['twilio', 'xendit', 'stripe', 'httpsms', 'revenuecat'] as const
 
 // Webhook dedupe: insert first; a conflict means this event was already handled.
 export const webhookEvents = pgTable(

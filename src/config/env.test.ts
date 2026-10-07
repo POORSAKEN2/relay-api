@@ -17,6 +17,11 @@ it('fills in defaults', () => {
     EMAIL_PROVIDER: 'log',
     SMTP_HOST: 'smtp.gmail.com',
     SMTP_PORT: 465,
+    LLM_PROVIDER: 'off',
+    GROQ_MODEL: 'openai/gpt-oss-20b',
+    ANTHROPIC_MODEL: 'claude-haiku-4-5',
+    LLM_TIMEOUT_MS: 8000,
+    RECEPTIONIST_TEST_CONSOLE: false,
   })
 })
 
@@ -45,15 +50,29 @@ it('needs both httpSMS keys to send real texts', () => {
   expect(parseEnv({ ...required, SMS_PROVIDER: 'httpsms', ...keys }).SMS_PROVIDER).toBe('httpsms')
 })
 
-it('needs the Gmail address and app password to send real emails', () => {
+it('needs the Gmail login and sender to send real emails', () => {
   expect(() => parseEnv({ ...required, EMAIL_PROVIDER: 'smtp' })).toThrow(/SMTP_USER/)
-  expect(() => parseEnv({ ...required, EMAIL_PROVIDER: 'smtp' })).toThrow(/SMTP_PASS/)
-  const gmail = { SMTP_USER: 'relay.demo@gmail.com', SMTP_PASS: 'abcdefghijklmnop' }
-  expect(parseEnv({ ...required, EMAIL_PROVIDER: 'smtp', ...gmail }).EMAIL_PROVIDER).toBe('smtp')
+  expect(() => parseEnv({ ...required, EMAIL_PROVIDER: 'smtp' })).toThrow(/SMTP_PASSWORD/)
+  expect(() => parseEnv({ ...required, EMAIL_PROVIDER: 'smtp' })).toThrow(/EMAIL_FROM/)
+  const login = {
+    SMTP_USER: 'a@gmail.com',
+    SMTP_PASSWORD: 'app-password',
+    EMAIL_FROM: 'a@gmail.com',
+  }
+  expect(parseEnv({ ...required, EMAIL_PROVIDER: 'smtp', ...login }).EMAIL_PROVIDER).toBe('smtp')
 })
 
 it('takes the app password as Google shows it, with spaces', () => {
-  expect(parseEnv({ ...required, SMTP_PASS: 'abcd efgh ijkl mnop' }).SMTP_PASS).toBe(
+  expect(parseEnv({ ...required, SMTP_PASSWORD: 'abcd efgh ijkl mnop' }).SMTP_PASSWORD).toBe(
     'abcdefghijklmnop',
   )
+})
+
+it('needs the chosen language model provider’s key', () => {
+  expect(() => parseEnv({ ...required, LLM_PROVIDER: 'groq' })).toThrow(/GROQ_API_KEY/)
+  expect(() => parseEnv({ ...required, LLM_PROVIDER: 'anthropic' })).toThrow(/ANTHROPIC_API_KEY/)
+  expect(parseEnv({ ...required, LLM_PROVIDER: 'groq', GROQ_API_KEY: 'k' }).LLM_PROVIDER).toBe(
+    'groq',
+  )
+  expect(() => parseEnv({ ...required, LLM_PROVIDER: 'openai' })).toThrow(/LLM_PROVIDER/)
 })

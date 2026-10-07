@@ -1,15 +1,18 @@
 import * as Sentry from '@sentry/node'
 import { env } from '../../config/env.ts'
 import { MESSAGE_MAX_ATTEMPTS } from '../../db/schema.ts'
+import { sendEmail } from '../../lib/email.ts'
 import { logger } from '../../lib/logger.ts'
 import { sendSms } from './httpsms.ts'
 import * as queries from './messaging.queries.ts'
-import { sendMail } from './smtp.ts'
+import { endOfQuietHours } from './quiet-hours.ts'
+import { TEXT_RULES } from './rules.ts'
 
-// The sender loop: every few seconds, texts and emails that are due go to their provider.
-// sendText() and sendEmail() only save them, inside the caller's transaction, so a message
-// never leaves for a change that was rolled back. Not a pg-boss cron: those run once a minute
-// at most, and a missed-call text-back must leave within 30 seconds.
+// The sender loop: every few seconds, texts and emails that are due go out. sendText() and
+// queueEmail() only save them, inside the caller's transaction, so nothing leaves for a change
+// that was rolled back. Not a pg-boss cron: those run once a minute at most, and a missed-call
+// text-back must leave within 30 seconds. Texts whose rule waits for quiet hours are checked
+// again just before sending.
 
 const ROUND_MS = 5_000
 const PER_ROUND = 20
@@ -28,7 +31,7 @@ export async function deliver(text: OutgoingText, lastTry: boolean) {
     if (env.NODE_ENV === 'development') {
       logger.info({ to: text.contact, body: text.body }, 'Development only: the text')
     }
-    await queries.markLogged(text.id)
+    await queries.markSent(text.id)
     return
   }
 
@@ -61,30 +64,19 @@ export type OutgoingEmail = {
   body: string
 }
 
-// Hands one email to the SMTP server. Failures are retried like texts.
+// Hands one email to the SMTP server (sendEmail only logs it with EMAIL_PROVIDER=log), as
+// the contractor. Failures are retried like texts.
 export async function deliverEmail(email: OutgoingEmail, lastTry: boolean) {
-  if (env.EMAIL_PROVIDER === 'log') {
-    logger.info({ messageId: email.id }, 'Email logged, not sent (EMAIL_PROVIDER=log)')
-    if (env.NODE_ENV === 'development') {
-      logger.info(
-        { to: email.contact, subject: email.subject, body: email.body },
-        'Development only: the email',
-      )
-    }
-    await queries.markLogged(email.id)
-    return
-  }
-
   try {
     const sender = await queries.findEmailSender(email.tenantId)
-    const providerId = await sendMail({
+    const providerId = await sendEmail({
       fromName: sender.name,
       to: email.contact,
       replyTo: sender.contactEmail,
       subject: email.subject,
       text: email.body,
     })
-    await queries.markEmailSent(email.id, providerId)
+    await queries.markEmailSent(email.id, providerId ?? null)
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error)
     logger.warn({ err: error, messageId: email.id, lastTry }, 'Email not sent')
@@ -102,7 +94,18 @@ export async function sendDueMessages() {
 export async function sendDueTexts() {
   await queries.failUnfinished('sms')
   const texts = await queries.claimDue('sms', PER_ROUND)
-  for (const text of texts) await deliver(text, text.attempts >= MESSAGE_MAX_ATTEMPTS)
+  for (const text of texts) {
+    // Checked again here, not only when the text was saved: one saved at 20:45 must not go
+    // out at 23:00 because the server or the phone was down, or a retry crossed 21:00.
+    if (TEXT_RULES[text.kind].quietHours) {
+      const until = await endOfQuietHours(text.tenantId)
+      if (until) {
+        await queries.holdUntil(text.id, until)
+        continue
+      }
+    }
+    await deliver(text, text.attempts >= MESSAGE_MAX_ATTEMPTS)
+  }
   return texts.length
 }
 

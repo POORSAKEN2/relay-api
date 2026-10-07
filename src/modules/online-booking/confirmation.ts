@@ -1,59 +1,12 @@
-import { formatMoney, formatPhone } from '../../lib/labels.ts'
+import { formatPhone } from '../../lib/labels.ts'
 
-// What the homeowner is told by text and email about their visit: the confirmation right
-// after booking online, and the news when they move or cancel it from their link.
+// What the homeowner is told by text and email when they move or cancel their visit from
+// their link. (The confirmation after booking is homeowner-messages' confirmationMessage.)
 // Pure, so the words are tested without a database.
-
-export type Confirmation = {
-  tenantName: string
-  contactPhone: string // the contractor's, E.164
-  currency: string
-  customerName: string
-  serviceName: string
-  dayLabel: string // 'Tue, Oct 6' (formatDay)
-  windowLabel: string // '8 AM - 12 PM' (textWindow)
-  street: string
-  unit: string | null
-  city: string
-  state: string
-  zip: string
-  priorityFeeCents: number
-  manageUrl: string // the link to change or cancel the visit
-}
 
 // Curly quotes and dashes typed into a name would switch the whole text to Unicode.
 export function plainText(text: string): string {
   return text.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, '-')
-}
-
-export function confirmationText(v: Confirmation): string {
-  const street = v.unit ? `${v.street}, ${v.unit}` : v.street
-  return plainText(
-    `${v.tenantName}: you're booked for ${v.serviceName} on ${v.dayLabel}, ${v.windowLabel} at ${street}. Pay at the visit. Change or cancel: ${v.manageUrl} Reply STOP to opt out.`,
-  )
-}
-
-export function confirmationEmail(v: Confirmation): { subject: string; body: string } {
-  const priority =
-    v.priorityFeeCents > 0
-      ? [`Priority service: ${formatMoney(v.priorityFeeCents, v.currency)}, paid at the visit`]
-      : []
-  const body = [
-    `Hi ${firstName(v.customerName)},`,
-    '',
-    `Your visit with ${v.tenantName} is booked.`,
-    '',
-    `Service: ${v.serviceName}`,
-    `Arrival window: ${v.dayLabel}, ${v.windowLabel}`,
-    `Address: ${addressLine(v)}`,
-    ...priority,
-    '',
-    "There's nothing to pay now. You pay the technician at the visit.",
-    '',
-    `Need to change or cancel? ${v.manageUrl}`,
-    ...signOff(v),
-  ]
-  return { subject: `Your visit is booked: ${v.dayLabel}`, body: body.join('\n') }
 }
 
 // '123 Main St, Unit 4, Phoenix, AZ 85001'; the unit is left out when there is none.

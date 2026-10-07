@@ -117,9 +117,10 @@ export async function unassignUpcomingJobs(tenantId: string, technicianId: strin
     )
     .for('update', { of: jobs })
   if (upcoming.length > 0) {
+    // A job with no technician has no technician link.
     await tx
       .update(jobs)
-      .set({ technicianId: null })
+      .set({ technicianId: null, techLinkHash: null })
       .where(
         and(
           eq(jobs.tenantId, tenantId),

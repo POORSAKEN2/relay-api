@@ -1,17 +1,12 @@
 import * as Sentry from '@sentry/node'
-import { PgBoss } from 'pg-boss'
-import { env } from '../config/env.ts'
 import { logger } from '../lib/logger.ts'
 import * as accounts from '../modules/accounts/accounts.service.ts'
+import * as billing from '../modules/billing/billing.service.ts'
+import * as homeownerMessages from '../modules/homeowner-messages/homeowner-messages.service.ts'
 import * as onlineBooking from '../modules/online-booking/online-booking.service.ts'
 import * as waitlist from '../modules/online-booking/waitlist.service.ts'
-
-const boss = new PgBoss(env.DATABASE_URL)
-
-boss.on('error', (error) => {
-  logger.error({ err: error }, 'pg-boss error')
-  Sentry.captureException(error)
-})
+import { wrapUpCall } from '../modules/receptionist/wrap-up.ts'
+import { boss } from './boss.ts'
 
 export async function startJobs() {
   await boss.start()
@@ -39,11 +34,29 @@ export async function startJobs() {
     if (offered > 0 || expired > 0) logger.info({ offered, expired }, 'Waitlist offers made')
   })
 
+  // Every 5 minutes: homeowners are reminded of their visit a day and two hours before it.
+  await register('visit-reminders', { cron: '*/5 * * * *' }, async () => {
+    const reminded = await homeownerMessages.sendVisitReminders()
+    if (reminded > 0) logger.info({ reminded }, 'Visit reminders saved')
+  })
+
+  // Daily: once a contractor's month has ended in its time zone, invoice its recovered jobs.
+  // 12:00 UTC is past midnight on the 1st everywhere in the US.
+  await register('recovered-job-invoices', { cron: '0 12 * * *' }, async () => {
+    const created = await billing.createMonthlyInvoices()
+    if (created > 0) logger.info({ created }, 'Recovered-job invoices made')
+  })
+
   // Daily: photos on bookings nobody finished go 30 days after the homeowner's last activity.
   await register('booking-photo-cleanup', { cron: '30 3 * * *' }, async () => {
     const deleted = await onlineBooking.deleteIdlePhotos()
     if (deleted > 0) logger.info({ deleted }, 'Idle booking photos deleted')
   })
+
+  // Queued when an AI call ends: its summary, on the call and on the job it booked.
+  await register<{ tenantId: string; callId: string }>('call-wrapup', {}, ({ tenantId, callId }) =>
+    wrapUpCall(tenantId, callId),
+  )
 }
 
 export async function stopJobs() {

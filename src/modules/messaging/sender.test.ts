@@ -1,27 +1,26 @@
 import { eq, sql } from 'drizzle-orm'
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createTenant, resetDb } from '../../../test/helpers.ts'
 import { env } from '../../config/env.ts'
 import { db } from '../../db/client.ts'
 import { messages, phoneNumbers } from '../../db/schema.ts'
+import { sendEmail } from '../../lib/email.ts'
 import { sendSms } from './httpsms.ts'
 import { sendDueMessages, startSender, stopSender } from './sender.ts'
-import { sendMail } from './smtp.ts'
 
 vi.mock('./httpsms.ts', () => ({ sendSms: vi.fn() }))
-vi.mock('./smtp.ts', () => ({ sendMail: vi.fn() }))
+vi.mock('../../lib/email.ts', () => ({ sendEmail: vi.fn() }))
 
 const SENDING_NUMBER = '+639170000000'
 
 beforeEach(async () => {
   await resetDb()
   vi.mocked(sendSms).mockReset()
-  vi.mocked(sendMail).mockReset()
+  vi.mocked(sendEmail).mockReset()
   env.SMS_PROVIDER = 'httpsms'
 })
 afterEach(() => {
   env.SMS_PROVIDER = 'log'
-  env.EMAIL_PROVIDER = 'log'
 })
 
 async function shopWithPhone() {
@@ -157,14 +156,13 @@ it('only logs texts with SMS_PROVIDER=log', async () => {
 })
 
 it('sends a due email as the contractor, with replies going to the contractor', async () => {
-  env.EMAIL_PROVIDER = 'smtp'
   const tenant = await createTenant('desert')
   const email = await queueEmail(tenant.id)
-  vi.mocked(sendMail).mockResolvedValue('<abc@gmail.com>')
+  vi.mocked(sendEmail).mockResolvedValue('<abc@gmail.com>')
 
   expect(await sendDueMessages()).toBe(1)
 
-  expect(sendMail).toHaveBeenCalledWith({
+  expect(sendEmail).toHaveBeenCalledWith({
     fromName: 'desert HVAC',
     to: 'sam@example.com',
     replyTo: 'office@desert.test',
@@ -181,10 +179,9 @@ it('sends a due email as the contractor, with replies going to the contractor', 
 })
 
 it('tries a failed email again a minute later, and gives up after 3 tries', async () => {
-  env.EMAIL_PROVIDER = 'smtp'
   const tenant = await createTenant('desert')
   const email = await queueEmail(tenant.id)
-  vi.mocked(sendMail).mockRejectedValue(new Error('Connection timeout'))
+  vi.mocked(sendEmail).mockRejectedValue(new Error('Connection timeout'))
 
   await sendDueMessages()
   expect(await reload(email.id)).toMatchObject({
@@ -199,46 +196,34 @@ it('tries a failed email again a minute later, and gives up after 3 tries', asyn
   await makeDue(email.id)
   await sendDueMessages()
   expect(await reload(email.id)).toMatchObject({ status: 'failed', attempts: 3 })
-  expect(sendMail).toHaveBeenCalledTimes(3)
+  expect(sendEmail).toHaveBeenCalledTimes(3)
 })
 
 it('sends texts by text and emails by email', async () => {
-  env.EMAIL_PROVIDER = 'smtp'
   const tenant = await shopWithPhone()
   const text = await queueText(tenant.id)
   const email = await queueEmail(tenant.id)
   vi.mocked(sendSms).mockResolvedValue('httpsms-id-1')
-  vi.mocked(sendMail).mockResolvedValue('<abc@gmail.com>')
+  vi.mocked(sendEmail).mockResolvedValue('<abc@gmail.com>')
 
   expect(await sendDueMessages()).toBe(2)
 
   expect(sendSms).toHaveBeenCalledTimes(1)
   expect(sendSms).toHaveBeenCalledWith(expect.objectContaining({ requestId: text.id }))
-  expect(sendMail).toHaveBeenCalledTimes(1)
-  expect(await reload(email.id)).toMatchObject({ status: 'sent' })
-})
-
-it('only logs emails with EMAIL_PROVIDER=log', async () => {
-  const tenant = await createTenant('desert')
-  const email = await queueEmail(tenant.id)
-
-  await sendDueMessages()
-
-  expect(sendMail).not.toHaveBeenCalled()
+  expect(sendEmail).toHaveBeenCalledTimes(1)
   expect(await reload(email.id)).toMatchObject({ status: 'sent' })
 })
 
 it('keeps sending texts while Gmail is stuck on an email', async () => {
-  env.EMAIL_PROVIDER = 'smtp'
   const tenant = await shopWithPhone()
   await queueEmail(tenant.id)
   let answerGmail = (_id: string) => {}
-  vi.mocked(sendMail).mockReturnValue(new Promise((resolve) => (answerGmail = resolve)))
+  vi.mocked(sendEmail).mockReturnValue(new Promise((resolve) => (answerGmail = resolve)))
   vi.mocked(sendSms).mockResolvedValue('httpsms-id-1')
 
   startSender()
   try {
-    await vi.waitFor(() => expect(sendMail).toHaveBeenCalled())
+    await vi.waitFor(() => expect(sendEmail).toHaveBeenCalled())
     // A missed-call text-back written while the email hangs still leaves within a round.
     const text = await queueText(tenant.id)
     await vi.waitFor(
@@ -267,4 +252,99 @@ it('fails a message whose last try never finished, and keeps sending the rest', 
   })
   expect(await reload(next.id)).toMatchObject({ providerMessageId: 'httpsms-id-1' })
   expect(sendSms).toHaveBeenCalledTimes(1)
+})
+
+describe('quiet hours', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function at(time: string) {
+    vi.setSystemTime(new Date(`2030-01-08T${time}-07:00`))
+  }
+
+  it('holds a reminder at 23:00 until 08:00 without counting a try', async () => {
+    const tenant = await shopWithPhone()
+    at('23:00:00')
+    const text = await queueText(tenant.id, { kind: 'reminder' })
+
+    await sendDueMessages()
+
+    expect(sendSms).not.toHaveBeenCalled()
+    expect(await reload(text.id)).toMatchObject({
+      status: 'queued',
+      attempts: 0,
+      sendAfter: new Date('2030-01-09T08:00:00-07:00'),
+    })
+  })
+
+  it('holds a reminder on attempts: 2 without failing it', async () => {
+    const tenant = await shopWithPhone()
+    at('23:00:00')
+    const text = await queueText(tenant.id, { kind: 'reminder', attempts: 2 })
+
+    await sendDueMessages()
+
+    expect(sendSms).not.toHaveBeenCalled()
+    expect(await reload(text.id)).toMatchObject({
+      status: 'queued',
+      attempts: 2,
+    })
+  })
+
+  it('hands on_my_way and job_assigned over at 23:00', async () => {
+    const tenant = await shopWithPhone()
+    at('23:00:00')
+    await queueText(tenant.id, { kind: 'on_my_way' })
+    await queueText(tenant.id, { kind: 'job_assigned' })
+
+    await sendDueMessages()
+
+    expect(sendSms).toHaveBeenCalledTimes(2)
+  })
+
+  it('holds new_booking_alert at 23:00 until 08:00', async () => {
+    const tenant = await shopWithPhone()
+    at('23:00:00')
+    const text = await queueText(tenant.id, { kind: 'new_booking_alert' })
+
+    await sendDueMessages()
+
+    expect(sendSms).not.toHaveBeenCalled()
+    expect(await reload(text.id)).toMatchObject({
+      status: 'queued',
+      attempts: 0,
+      sendAfter: new Date('2030-01-09T08:00:00-07:00'),
+    })
+  })
+
+  it('sends an email with kind reminder at 23:00', async () => {
+    const tenant = await createTenant('desert')
+    at('23:00:00')
+    const email = await queueText(tenant.id, {
+      channel: 'email',
+      contact: 'maria@example.com',
+      kind: 'reminder',
+      subject: 'Reminder',
+      body: 'See you tomorrow',
+    })
+
+    await sendDueMessages()
+
+    expect(sendEmail).toHaveBeenCalled()
+    expect(await reload(email.id)).toMatchObject({ status: 'sent' })
+  })
+
+  it('hands a reminder over at 14:00', async () => {
+    const tenant = await shopWithPhone()
+    at('14:00:00')
+    await queueText(tenant.id, { kind: 'reminder' })
+
+    await sendDueMessages()
+
+    expect(sendSms).toHaveBeenCalledTimes(1)
+  })
 })

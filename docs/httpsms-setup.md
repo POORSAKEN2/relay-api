@@ -118,8 +118,9 @@ sent), and replies and missed calls are not recorded.
    SMS.
 2. **A homeowner text.** Book a job for your own number with the texts box ticked, assign it,
    and tap **On my way** as the technician.
-3. **STOP.** Reply `STOP` from your phone. Later homeowner texts to you are saved as `blocked`
-   with reason `opted_out`. Reply `START` to undo it.
+3. **STOP.** Reply `STOP` (or `Stop.`) from your phone. Later homeowner texts to you are saved as
+   `blocked` with reason `opted_out`, and texts already waiting (quiet hours, retries) are
+   blocked too; texts already on the phone still go. Reply `START` to undo it.
 4. **Missed call.** Call the demo phone and don't answer: a row appears in `calls`.
 
 ## Rules Relay applies
@@ -131,6 +132,8 @@ sent), and replies and missed calls are not recorded.
 - Staff texts (sign-in codes, job alerts) are never blocked or held.
 - Unprompted texts (booking recovery, reminders, waitlist, review requests) wait until quiet
   hours end: 21:00 to 08:00 Manila time by default (`tenants.quiet_hours_start` and `_end`).
+  A text already waiting is checked again when it is due, so downtime or retries never send
+  one at night. Replies, visit texts, staff texts and emails are never held.
 - Links in texts point at `https://desert.<APP_DOMAIN>/`. A phone can't open `localhost`, so
   for a demo the web app also needs a public address.
 

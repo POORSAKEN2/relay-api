@@ -14,15 +14,18 @@
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node --env-file-if-exists=.env src/db/migrate.ts",
-    "db:seed": "node --env-file-if-exists=.env src/db/seed.ts"
+    "db:seed": "node --env-file-if-exists=.env src/db/seed.ts",
+    "receptionist:scenarios": "node --env-file-if-exists=.env scripts/receptionist-scenarios.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
     "@sentry/node": "^11.1.0",
     "cookie": "^2.0.1",
     "cors": "^2.8.6",
     "drizzle-orm": "^0.45.3",
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.0",
+    "fflate": "^0.8.3",
     "jose": "^6.2.12",
     "nodemailer": "^10.0.14",
     "pg": "^8.23.0",

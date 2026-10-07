@@ -260,7 +260,7 @@ export async function updateJob(
 
 export async function insertNote(
   tenantId: string,
-  values: { jobId: string; authorId: string; body: string },
+  values: { jobId: string; authorId: string | null; body: string }, // author null = AI call summary
   tx: Db = db,
 ) {
   const [note] = await tx

@@ -2,12 +2,16 @@ import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { SignJWT } from 'jose'
 import request from 'supertest'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createTenant, resetDb } from '../../../test/helpers.ts'
 import { createApp } from '../../app.ts'
 import { env } from '../../config/env.ts'
 import { db } from '../../db/client.ts'
 import { calls, consentEvents, customers, messages, phoneNumbers } from '../../db/schema.ts'
+import { emitToTenant } from '../../realtime/index.ts'
+import { sendText } from './sms.ts'
+
+vi.mock('../../realtime/index.ts', () => ({ emitToTenant: vi.fn() }))
 
 const app = createApp()
 const KEY = 'test-webhook-signing-key'
@@ -16,6 +20,7 @@ const HOMEOWNER = '+639171234567'
 
 beforeEach(async () => {
   await resetDb()
+  vi.mocked(emitToTenant).mockClear()
   env.HTTPSMS_WEBHOOK_SIGNING_KEY = KEY
 })
 afterEach(() => {
@@ -58,6 +63,25 @@ async function handedOver(tenantId: string) {
       body: 'On my way',
       providerMessageId: 'httpsms-1',
       attempts: 1,
+    })
+    .returning()
+  return text
+}
+
+// An outbound text waiting to go: queued with a future sendAfter.
+async function waiting(tenantId: string, values: Partial<typeof messages.$inferInsert> = {}) {
+  const [text] = await db
+    .insert(messages)
+    .values({
+      tenantId,
+      channel: 'sms',
+      direction: 'outbound',
+      status: 'queued',
+      contact: HOMEOWNER,
+      kind: 'reminder',
+      body: 'x',
+      sendAfter: new Date(Date.now() + 60 * 60 * 1000),
+      ...values,
     })
     .returning()
   return text
@@ -114,6 +138,7 @@ describe('POST /api/webhooks/httpsms', () => {
     await post('message.phone.received', { contact: HOMEOWNER, content: 'Hi' }, id)
     await post('message.phone.received', { contact: HOMEOWNER, content: 'Hi' }, id)
     expect(await db.select().from(messages).where(eq(messages.tenantId, tenant.id))).toHaveLength(1)
+    expect(emitToTenant).toHaveBeenCalledTimes(1)
   })
 
   it('saves a text from a homeowner, matched to their customer record', async () => {
@@ -142,23 +167,129 @@ describe('POST /api/webhooks/httpsms', () => {
         providerMessageId: 'httpsms-in-1',
       }),
     ])
+    // The office's inbox hears about it once the text is saved.
+    expect(emitToTenant).toHaveBeenCalledWith(tenant.id, 'inbox.updated', { contact: HOMEOWNER })
   })
 
-  it('records STOP and START replies as consent', async () => {
+  it.each(['STOP', 'stopall', 'Unsubscribe', 'cancel', 'END', 'quit', 'Stop.', ' stop!! '])(
+    'records "%s" as an opt-out',
+    async (word) => {
+      const tenant = await shop()
+      await post('message.phone.received', { contact: HOMEOWNER, content: word })
+
+      const [inbound] = await db.select().from(messages).where(eq(messages.direction, 'inbound'))
+      const consent = await db.select().from(consentEvents)
+      expect(consent).toEqual([
+        expect.objectContaining({
+          tenantId: tenant.id,
+          contact: HOMEOWNER,
+          channel: 'sms',
+          source: 'sms_reply',
+          granted: false,
+          messageId: inbound.id,
+        }),
+      ])
+    },
+  )
+
+  it('records UNSTOP as consent to receive texts', async () => {
+    const tenant = await shop()
+    await post('message.phone.received', { contact: HOMEOWNER, content: 'UNSTOP' })
+
+    const [inbound] = await db.select().from(messages).where(eq(messages.direction, 'inbound'))
+    const consent = await db.select().from(consentEvents)
+    expect(consent).toEqual([
+      expect.objectContaining({
+        tenantId: tenant.id,
+        contact: HOMEOWNER,
+        channel: 'sms',
+        source: 'sms_reply',
+        granted: true,
+        messageId: inbound.id,
+      }),
+    ])
+  })
+
+  it.each(['Please stop texting me', 'STOP?'])(
+    'saves "%s" as an inbound text without changing consent',
+    async (content) => {
+      const tenant = await shop()
+      await post('message.phone.received', { contact: HOMEOWNER, content })
+
+      expect(await db.select().from(messages)).toEqual([
+        expect.objectContaining({
+          tenantId: tenant.id,
+          direction: 'inbound',
+          body: content,
+        }),
+      ])
+      expect(await db.select().from(consentEvents)).toHaveLength(0)
+    },
+  )
+
+  it('sends no reply back after a STOP', async () => {
+    await shop()
+    await post('message.phone.received', { contact: HOMEOWNER, content: 'STOP' })
+
+    const rows = await db.select().from(messages)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].direction).toBe('inbound')
+  })
+
+  it('blocks waiting homeowner texts on STOP, leaving staff texts and texts on the phone', async () => {
+    const tenant = await shop()
+    const otherTenant = await createTenant('other')
+
+    const heldReminder = await waiting(tenant.id, { kind: 'reminder' })
+    const retrying = await waiting(tenant.id, { kind: 'on_my_way', attempts: 1 })
+    const onPhone = await waiting(tenant.id, { kind: 'on_my_way', providerMessageId: 'httpsms-9' })
+    const staffText = await waiting(tenant.id, { kind: 'job_assigned' })
+    const otherContractor = await waiting(otherTenant.id, { kind: 'reminder' })
+
+    await post('message.phone.received', { contact: HOMEOWNER, content: 'STOP' })
+
+    expect(await statusOf(heldReminder.id)).toMatchObject({
+      status: 'blocked',
+      blockedReason: 'opted_out',
+    })
+    expect(await statusOf(retrying.id)).toMatchObject({
+      status: 'blocked',
+      blockedReason: 'opted_out',
+    })
+    expect(await statusOf(onPhone.id)).toMatchObject({ status: 'queued', blockedReason: null })
+    expect(await statusOf(staffText.id)).toMatchObject({ status: 'queued', blockedReason: null })
+    expect(await statusOf(otherContractor.id)).toMatchObject({
+      status: 'queued',
+      blockedReason: null,
+    })
+  })
+
+  it('does not revive blocked texts on START', async () => {
+    const tenant = await shop()
+    const held = await waiting(tenant.id, { kind: 'reminder' })
+
+    await post('message.phone.received', { contact: HOMEOWNER, content: 'STOP' })
+    expect((await statusOf(held.id)).status).toBe('blocked')
+
+    await post('message.phone.received', { contact: HOMEOWNER, content: 'START' })
+    expect((await statusOf(held.id)).status).toBe('blocked')
+  })
+
+  it('round trip: webhook STOP blocks later texts, START allows them again', async () => {
     const tenant = await shop()
 
-    await post('message.phone.received', { contact: HOMEOWNER, content: ' stop ' })
+    await post('message.phone.received', { contact: HOMEOWNER, content: 'STOP' })
+    await sendText(tenant.id, { contact: HOMEOWNER, kind: 'text_back', body: 'after stop' })
     await post('message.phone.received', { contact: HOMEOWNER, content: 'START' })
+    await sendText(tenant.id, { contact: HOMEOWNER, kind: 'text_back', body: 'after start' })
 
-    const consent = await db.select().from(consentEvents).orderBy(consentEvents.createdAt)
-    expect(consent).toEqual([
-      expect.objectContaining({ tenantId: tenant.id, contact: HOMEOWNER, granted: false }),
-      expect.objectContaining({ tenantId: tenant.id, contact: HOMEOWNER, granted: true }),
-    ])
-    expect(consent[0]).toMatchObject({ channel: 'sms', source: 'sms_reply' })
+    const [afterStop] = await db.select().from(messages).where(eq(messages.body, 'after stop'))
+    const [afterStart] = await db.select().from(messages).where(eq(messages.body, 'after start'))
+    expect(afterStop).toMatchObject({ status: 'blocked', blockedReason: 'opted_out' })
+    expect(afterStart).toMatchObject({ status: 'queued', blockedReason: null })
   })
 
-  it('records a missed call', async () => {
+  it('records a missed call and texts the caller a booking link', async () => {
     const tenant = await shop()
 
     await post('message.call.missed', {
@@ -167,7 +298,8 @@ describe('POST /api/webhooks/httpsms', () => {
       timestamp: '2030-01-08T09:15:00+08:00',
     })
 
-    expect(await db.select().from(calls)).toEqual([
+    const saved = await db.select().from(calls)
+    expect(saved).toEqual([
       expect.objectContaining({
         tenantId: tenant.id,
         providerSid: 'call-1',
@@ -177,11 +309,42 @@ describe('POST /api/webhooks/httpsms', () => {
         startedAt: new Date('2030-01-08T01:15:00Z'),
       }),
     ])
+    expect(await db.select().from(messages)).toEqual([
+      expect.objectContaining({
+        kind: 'text_back',
+        status: 'queued',
+        contact: HOMEOWNER,
+        callId: saved[0].id,
+        body: expect.stringContaining(`?call=${saved[0].id}&phone=`),
+      }),
+    ])
+  })
+
+  it('saves one call and one text when the same missed-call event comes twice', async () => {
+    await shop()
+    const eventId = randomUUID()
+    const data = { contact: HOMEOWNER, message_id: 'call-1' }
+
+    await post('message.call.missed', data, eventId)
+    await post('message.call.missed', data, eventId)
+    // httpSMS sent it again under a new event id: the call is still known.
+    await post('message.call.missed', data)
+
+    expect(await db.select().from(calls)).toHaveLength(1)
+    expect(await db.select().from(messages)).toHaveLength(1)
+  })
+
+  it('records a missed call from a hidden number without texting', async () => {
+    await shop()
+    await post('message.call.missed', { message_id: 'call-1' })
+    expect(await db.select().from(calls)).toHaveLength(1)
+    expect(await db.select().from(messages)).toHaveLength(0)
   })
 
   it('answers 200 to an event for a number no contractor has, and saves nothing', async () => {
     await createTenant('desert')
     await post('message.phone.received', { contact: HOMEOWNER, content: 'Hi' })
     expect(await db.select().from(messages)).toHaveLength(0)
+    expect(emitToTenant).not.toHaveBeenCalled()
   })
 })

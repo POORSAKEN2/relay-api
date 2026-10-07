@@ -11,6 +11,7 @@ import {
   tenants,
   webhookEvents,
 } from '../../db/schema.ts'
+import type { MessageKind } from './rules.ts'
 
 // Tenant-scoped queries take tenantId first. The sender's work on a message by id is not
 // tenant-scoped: it serves every contractor.
@@ -44,8 +45,8 @@ export async function findQuietHours(tenantId: string, tx: Db = db) {
   return tenant
 }
 
-export async function insertText(values: typeof messages.$inferInsert, tx: Db = db) {
-  const [message] = await tx.insert(messages).values(values).returning({ id: messages.id })
+export async function insertMessage(values: typeof messages.$inferInsert, tx: Db = db) {
+  const [message] = await tx.insert(messages).values(values).returning()
   return message
 }
 
@@ -118,11 +119,23 @@ export function claimDue(channel: 'sms' | 'email', limit: number) {
     .returning({
       id: messages.id,
       tenantId: messages.tenantId,
+      channel: messages.channel,
+      kind: messages.kind,
       contact: messages.contact,
       subject: messages.subject,
       body: messages.body,
       attempts: messages.attempts,
     })
+}
+
+// A claimed text that must wait for quiet hours: back to waiting until they end, and the
+// try claimDue counted is given back. Status is left alone, so a STOP that blocked
+// it meanwhile still stands.
+export async function holdUntil(messageId: string, sendAfter: Date) {
+  await db
+    .update(messages)
+    .set({ sendAfter, attempts: sql`${messages.attempts} - 1` })
+    .where(eq(messages.id, messageId))
 }
 
 // The provider took it. The status stays 'queued' until the phone reports it sent.
@@ -133,13 +146,13 @@ export async function markHandedOver(messageId: string, providerMessageId: strin
     .where(eq(messages.id, messageId))
 }
 
-// Only the 'log' provider: nothing will report back, so it counts as sent at once.
-export async function markLogged(messageId: string) {
+// Only a text under SMS_PROVIDER=log: nothing will report back, so it counts as sent at once.
+export async function markSent(messageId: string) {
   await db.update(messages).set({ status: 'sent' }).where(eq(messages.id, messageId))
 }
 
 // The email server took it. Email has no webhook, so this is final.
-export async function markEmailSent(messageId: string, providerMessageId: string) {
+export async function markEmailSent(messageId: string, providerMessageId: string | null) {
   await db
     .update(messages)
     .set({ status: 'sent', providerMessageId, lastError: null })
@@ -218,13 +231,41 @@ export async function insertReplyConsent(
     .values({ tenantId, channel: 'sms', source: 'sms_reply', ...values })
 }
 
+// After a STOP: texts to this number that are saved but not yet handed to httpSMS (held
+// for quiet hours, or waiting for a retry) are blocked, as sendText() would block them
+// now. A text already on the phone can't be called back.
+export async function blockWaitingTexts(
+  tenantId: string,
+  contact: string,
+  kinds: MessageKind[],
+  tx: Db,
+) {
+  await tx
+    .update(messages)
+    .set({ status: 'blocked', blockedReason: 'opted_out' })
+    .where(
+      and(
+        eq(messages.tenantId, tenantId),
+        eq(messages.contact, contact),
+        eq(messages.channel, 'sms'),
+        eq(messages.direction, 'outbound'),
+        eq(messages.status, 'queued'),
+        isNull(messages.providerMessageId),
+        inArray(messages.kind, kinds),
+      ),
+    )
+}
+
+// The new call's id, or undefined when the call was already saved (a repeated webhook).
 export async function insertMissedCall(
   tenantId: string,
   values: Omit<typeof calls.$inferInsert, 'tenantId'>,
   tx: Db,
 ) {
-  await tx
+  const [call] = await tx
     .insert(calls)
     .values({ tenantId, ...values })
     .onConflictDoNothing()
+    .returning({ id: calls.id })
+  return call?.id
 }

@@ -106,6 +106,8 @@ Every email account uses the same development password: the `DEV_PASSWORD` value
 
 Technicians have no password. They sign in at **http://desert.localhost:5173/sign-in/phone** with their mobile number: Sam Patel `(480) 555-0301`, Rita Gomez `(480) 555-0302`, Luis Moreno `(480) 555-0303`. With the default `SMS_PROVIDER=log` nothing is really texted: the code shows up in the `relay-api` terminal, on the line `Development only: the text`. To get real texts, see [Real texts with httpSMS](#real-texts-with-httpsms).
 
+Add a phone to a staff member on the Staff screen (`/staff`) to get booking alerts by text. Every new booking texts active owner and office users with a phone; priority bookings send right away, while routine bookings wait until quiet hours end.
+
 Plain http://localhost:5173 (no subdomain) shows the contractor's own website when `../contractor-site` exists; its **Book online** buttons lead to `desert.localhost:5173`.
 
 ### 7. Check everything works (optional)
@@ -144,6 +146,14 @@ The API tests run against `relay_test` and set up its tables themselves.
 ## Real texts with httpSMS
 
 The demo sends texts from an Android phone with a Philippine SIM, through [httpSMS](https://httpsms.com). Step-by-step setup, the rules Relay applies, and what to check when a text doesn't arrive: [docs/httpsms-setup.md](docs/httpsms-setup.md).
+
+## Phone calls with Telnyx
+
+Calls to the contractor's number come in through [Telnyx](https://telnyx.com). Account, number, webhook and what to check when a call doesn't come through: [docs/telnyx-setup.md](docs/telnyx-setup.md).
+
+## Real emails with Gmail
+
+Invite emails go through Gmail's SMTP server. Setup and troubleshooting: [docs/gmail-smtp-setup.md](docs/gmail-smtp-setup.md).
 
 ## Scripts
 

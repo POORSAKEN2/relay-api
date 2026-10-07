@@ -12,11 +12,46 @@ missing, and what a US launch would need on top.
 - [x] Compliance gate: `blocked` with `no_consent` or `opted_out` (`src/modules/messaging/rules.ts`).
 - [x] Delivery-status webhook, with repeats ignored through `webhook_events`.
 - [x] STOP and START replies write `consent_events` with source `sms_reply`.
+  - [x] A STOP blocks homeowner texts already waiting to go out.
 - [x] Quiet hours: unprompted texts wait until `quiet_hours_end` (`send_after`).
+  - [x] Checked again just before sending, so downtime or a retry never sends one at night.
 - [x] Staff texts (sign-in codes, job alerts) skip consent and quiet hours. Sign-in codes are
       sent right away and their body is still never stored.
 - [x] Sign-in codes come from the contractor's own sending number.
 - [x] The development log of every text stays, under `SMS_PROVIDER=log`.
+
+## Done (2026-10-05, homeowner messages)
+
+- [x] `src/modules/homeowner-messages/`: booking confirmation (every way of booking), visit
+      reminders 24 hours and 2 hours before (the `visit-reminders` job, every 5 minutes),
+      receipt when the technician records an in-person payment, review request when a job is
+      done (only with `tenants.review_url` set). Each goes as a text and, when the customer has
+      an address, as an email.
+- [x] Emails go through the same outbox as texts: a `messages` row with channel `email`,
+      saved in the change's transaction and sent by the sender loop with the same retries.
+      Emails skip consent and quiet hours.
+- [x] Office alerts: `new_booking_alert` and `priority_alert` to owner and office users with a
+      phone.
+
+## Done (2026-10-05, technician job texts)
+
+- [x] Technicians get a text (`job_assigned`) when a job is assigned, moved, reassigned, or removed.
+      Texts use plain hyphens (GSM-7 friendly) and skip quiet hours and consent checks.
+- [x] Texts for `assigned` and `changed` carry an expiring job-page link (`/j/<token>`).
+      The link is validated via `jobs.tech_link_hash` (sha256). Valid links forward to `/jobs/:jobId`;
+      reassigning, moving, cancelling, or deactivating invalidates the hash so older links
+      show a clean expired page.
+- [x] Removed texts tell the technician the job was taken off their list without any link.
+
+## Homeowner messages: still open
+
+- [ ] A 2-hour reminder for a visit that starts before quiet hours end (an 8 AM window) waits
+      until 8 AM, so it arrives as the window opens. Decide: skip it, or let reminders through
+      quiet hours.
+- [ ] Emails have no unsubscribe link and go out from `EMAIL_FROM` with no Reply-To. Set
+      Reply-To to the contractor's `contact_email` so replies reach them.
+- [ ] Rescheduling sends no `booking_changed` text yet; the reminders follow the new time.
+- [ ] Settings screen for `review_url` (today it can only be set in the database).
 
 ## Still to build
 
@@ -45,6 +80,7 @@ missing, and what a US launch would need on top.
 - [ ] Recovery wait (60 minutes) and cutoff (24 hours) as contractor settings, not constants.
 - [ ] A second reminder text, if the first one gets a good response.
 - [ ] A per-contractor switch to turn recovery texts off.
+- [ ] Office alerts by email too (module 10).
 
 ## US launch
 

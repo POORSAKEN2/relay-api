@@ -159,7 +159,7 @@ export async function removePhoto(user: SessionUser, technicianId: string) {
 }
 
 // Phone numbers and emails are unique across all of Relay; say which one is taken.
-async function saveOrExplain<T>(save: () => Promise<T>): Promise<T> {
+export async function saveOrExplain<T>(save: () => Promise<T>): Promise<T> {
   try {
     return await save()
   } catch (error) {

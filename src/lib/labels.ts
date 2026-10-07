@@ -67,6 +67,11 @@ export function formatDate(date: string): string {
   return dateFormat.format(new Date(`${date}T00:00:00Z`))
 }
 
+// 18900, 'USD' → '$189.00'
+export function formatMoney(cents: number, currency: string): string {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(cents / 100)
+}
+
 // 0 → 'Sundays'
 export function weekdaysLabel(weekday: number): string {
   return WEEKDAYS_PLURAL[weekday]
@@ -101,9 +106,4 @@ export function formatPhone(phone: string): string {
   const us = /^\+1(\d{3})(\d{3})(\d{4})$/.exec(phone)
   if (us) return `(${us[1]}) ${us[2]}-${us[3]}`
   return phone
-}
-
-// 4900, 'USD' → '$49.00'
-export function formatMoney(cents: number, currency: string): string {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(cents / 100)
 }

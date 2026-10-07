@@ -6,6 +6,8 @@ import type { SessionUser } from '../accounts/accounts.service.ts'
 import * as audit from '../audit/audit.queries.ts'
 import * as charges from '../charges/charges.service.ts'
 import * as customers from '../customers/customers.queries.ts'
+import { sendBookingConfirmation } from '../homeowner-messages/homeowner-messages.service.ts'
+import { sendOfficeAlert } from '../office-alerts/office-alerts.service.ts'
 import * as queries from './booking.queries.ts'
 import type { OfficeBookingInput } from './booking.schemas.ts'
 
@@ -154,17 +156,30 @@ export async function bookForOffice(user: SessionUser, input: OfficeBookingInput
       },
       tx,
     )
+    await sendBookingConfirmation(tenantId, job.id, tx)
     return job
   })
 
-  const change = { jobId: job.id, dates: [input.date] }
-  emitToTenant(tenantId, 'booking.created', change)
-  if (job.priority) emitToTenant(tenantId, 'booking.priority', change)
+  announceBooking(tenantId, job, input.date)
   return { jobId: job.id, date: input.date }
 }
 
-// Books a job and writes its booked lines (the service, and priority service when chosen) in
-// the same transaction. Every way of booking goes through here, so no job is without them.
+// Tells open dashboards about a new booking. Every way of booking calls this after its
+// transaction commits (never inside it: a booking that rolls back must not be announced), so
+// all of them send the same events.
+export function announceBooking(
+  tenantId: string,
+  job: { id: string; priority: boolean },
+  date: string,
+) {
+  const change = { jobId: job.id, dates: [date] }
+  emitToTenant(tenantId, 'booking.created', change)
+  if (job.priority) emitToTenant(tenantId, 'booking.priority', change)
+}
+
+// Books a job, writes its booked lines (the service, and priority service when chosen), and
+// texts the contractor's office staff, all in the booking's transaction. Every way of booking
+// goes through here, so no job is without its lines or its alert.
 export async function insertBookedJob(
   tenantId: string,
   values: Parameters<typeof queries.insertJob>[1],
@@ -172,6 +187,7 @@ export async function insertBookedJob(
 ) {
   const job = await queries.insertJob(tenantId, values, tx)
   await charges.addBookedLines(tenantId, job.id, tx)
+  await sendOfficeAlert(tenantId, job.id, tx)
   return job
 }
 

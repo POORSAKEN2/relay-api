@@ -37,6 +37,7 @@ export const DraftAnswersInput = z.object({
     vulnerableOccupant: z.boolean().optional(),
     priorityService: z.boolean().optional(),
     bookedVia: z.enum(BOOKED_VIA).optional(),
+    callId: z.uuid().optional().catch(undefined), // a mangled link id is dropped, never an error
   }),
 })
 
@@ -72,6 +73,9 @@ export const BookingInput = z.object({
   draftToken: z.string().optional(), // the draft this booking finishes, when there is one
   offerToken: z.string().max(64).optional(), // the waitlist offer this booking takes
   bookedVia: z.enum(BOOKED_VIA).optional(), // where the homeowner found the booking page
+  // The missed call whose text-back link the homeowner opened. A mangled id is dropped, not an
+  // error: a bad link must never stop a booking.
+  callId: z.uuid().optional().catch(undefined),
 })
 export type BookingInput = z.infer<typeof BookingInput>
 

@@ -2,11 +2,13 @@ import { db, type Tx } from '../../db/client.ts'
 import type { jobs } from '../../db/schema.ts'
 import { HttpError } from '../../lib/http-error.ts'
 import { formatDay, formatTime, formatWindow, statusLabel, weekdayOf } from '../../lib/labels.ts'
+import { hashToken, newToken } from '../../lib/tokens.ts'
 import { emitToTenant } from '../../realtime/index.ts'
 import type { SessionUser } from '../accounts/accounts.service.ts'
 import * as audit from '../audit/audit.queries.ts'
 import { reserveWindow, tenantOf } from '../booking/booking.service.ts'
 import * as charges from '../charges/charges.service.ts'
+import { sendReviewRequest } from '../homeowner-messages/homeowner-messages.service.ts'
 import * as queries from './dispatch.queries.ts'
 import type { SettableStatus, SlotInput } from './dispatch.schemas.ts'
 import { textTechnician } from './technician-texts.ts'
@@ -154,11 +156,19 @@ export async function moveJob(user: SessionUser, jobId: string, input: SlotInput
     const reassigned = input.technicianId !== job.technicianId
     if (sameSlot && !reassigned) return { changed: false, dates: [job.date] }
 
+    // Told before the update, so the text names the time they knew.
+    if (reassigned && job.technicianId) {
+      await textTechnician(tenantId, job.id, job.technicianId, 'removed', null, tx)
+    }
+    // A new link with every text: only its hash is kept, so an older text's link stops working.
+    const linkToken = input.technicianId ? newToken(16) : null
+
     await queries.updateJob(
       tenantId,
       job.id,
       {
         technicianId: input.technicianId,
+        techLinkHash: linkToken ? hashToken(linkToken) : null,
         ...slot,
         // A new time or technician makes the old arrival time meaningless.
         etaAt: null,
@@ -199,13 +209,8 @@ export async function moveJob(user: SessionUser, jobId: string, input: SlotInput
     }
     // The technician hears about it even with the app closed.
     if (input.technicianId) {
-      await textTechnician(
-        tenantId,
-        job.id,
-        input.technicianId,
-        reassigned ? 'assigned' : 'changed',
-        tx,
-      )
+      const change = reassigned ? 'assigned' : 'changed'
+      await textTechnician(tenantId, job.id, input.technicianId, change, linkToken, tx)
     }
     return { changed: true, dates: [...new Set([job.date, input.date])] }
   })
@@ -217,7 +222,8 @@ export async function moveJob(user: SessionUser, jobId: string, input: SlotInput
 // One status change, for the office's drawer and the technician's buttons alike: the only
 // place the status rules are applied. `checkJob` runs on the locked job before the rules (the
 // technician side checks the job is still theirs). `afterChange` runs in the same transaction,
-// only when the status really changed (a homeowner text, a note).
+// only when the status really changed (a homeowner text, a note). A job done, by either side,
+// asks the homeowner for a review, after anything `afterChange` sent.
 export async function changeStatus(change: {
   tenantId: string
   // Who changed it: a signed-in user, or the homeowner from their manage link.
@@ -283,6 +289,7 @@ export async function changeStatus(change: {
     if (change.actor === 'homeowner') await audit.insertHomeownerAction(tenantId, event, tx)
     else await audit.insertUserAction(tenantId, { ...event, actorUserId: change.actor.userId }, tx)
     await change.afterChange?.(tx)
+    if (to === 'done') await sendReviewRequest(tenantId, job.id, tx)
     return { changed: true, date: job.date }
   })
 

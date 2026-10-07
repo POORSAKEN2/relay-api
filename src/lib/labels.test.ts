@@ -26,7 +26,9 @@ it('shows a phone the way people write it', () => {
   expect(formatPhone('+442071234567')).toBe('+442071234567')
 })
 
-it('shows cents as money in the contractor’s currency', () => {
-  expect(formatMoney(4900, 'USD')).toBe('$49.00')
+it('writes an amount of money in the contractor’s currency', () => {
+  expect(formatMoney(18900, 'USD')).toBe('$189.00')
+  expect(formatMoney(123456, 'USD')).toBe('$1,234.56')
+  expect(formatMoney(0, 'USD')).toBe('$0.00')
   expect(formatMoney(150000, 'PHP')).toBe('₱1,500.00')
 })

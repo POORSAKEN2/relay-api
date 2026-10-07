@@ -1,5 +1,5 @@
 {
-  "id": "7a90f904-badd-421e-b10b-1e465f8026b1",
+  "id": "3cbc0db1-d6cd-43e3-be47-3d370408d68c",
   "prevId": "40e935af-1d43-4017-9f3e-48efc8f125d6",
   "version": "7",
   "dialect": "postgresql",
@@ -4147,6 +4147,95 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.sign_in_links": {
+      "name": "sign_in_links",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token_hash": {
+          "name": "token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "used_at": {
+          "name": "used_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "sign_in_links_user_id_idx": {
+          "name": "sign_in_links_user_id_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "sign_in_links_user_id_users_id_fk": {
+          "name": "sign_in_links_user_id_users_id_fk",
+          "tableFrom": "sign_in_links",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "sign_in_links_token_hash_unique": {
+          "name": "sign_in_links_token_hash_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "token_hash"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.subscription_invoices": {
       "name": "subscription_invoices",
       "schema": "",
@@ -4822,56 +4911,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
-        },
-        "ends_at": {
-          "name": "ends_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now() + interval '14 days'"
-        },
-        "offer_window_id": {
-          "name": "offer_window_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "offer_date": {
-          "name": "offer_date",
-          "type": "date",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "offer_window_starts_at": {
-          "name": "offer_window_starts_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "offer_expires_at": {
-          "name": "offer_expires_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "offer_link_hash": {
-          "name": "offer_link_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "offers_missed": {
-          "name": "offers_missed",
-          "type": "smallint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "missed_window_starts_at": {
-          "name": "missed_window_starts_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {
@@ -4893,28 +4932,6 @@
           ],
           "isUnique": false,
           "where": "\"waitlist_entries\".\"status\" = 'waiting'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "waitlist_entries_offered_idx": {
-          "name": "waitlist_entries_offered_idx",
-          "columns": [
-            {
-              "expression": "tenant_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "offer_window_starts_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"waitlist_entries\".\"status\" = 'offered'",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -4966,32 +4983,16 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "waitlist_entries_offer_link_hash_unique": {
-          "name": "waitlist_entries_offer_link_hash_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "offer_link_hash"
-          ]
-        }
-      },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
         "waitlist_entries_status_valid": {
           "name": "waitlist_entries_status_valid",
-          "value": "\"waitlist_entries\".\"status\" in ('waiting', 'offered', 'booked', 'removed', 'expired')"
+          "value": "\"waitlist_entries\".\"status\" in ('waiting', 'offered', 'booked', 'removed')"
         },
         "waitlist_entries_zip_format": {
           "name": "waitlist_entries_zip_format",
           "value": "\"waitlist_entries\".\"zip\" ~ '^[0-9]{5}$'"
-        },
-        "waitlist_entries_offer_complete": {
-          "name": "waitlist_entries_offer_complete",
-          "value": "(\"waitlist_entries\".\"status\" = 'offered') = (\"waitlist_entries\".\"offer_window_id\" is not null and \"waitlist_entries\".\"offer_date\" is not null and \"waitlist_entries\".\"offer_window_starts_at\" is not null and \"waitlist_entries\".\"offer_expires_at\" is not null and \"waitlist_entries\".\"offer_link_hash\" is not null)"
-        },
-        "waitlist_entries_offers_missed_range": {
-          "name": "waitlist_entries_offers_missed_range",
-          "value": "\"waitlist_entries\".\"offers_missed\" between 0 and 2"
         }
       },
       "isRLSEnabled": false

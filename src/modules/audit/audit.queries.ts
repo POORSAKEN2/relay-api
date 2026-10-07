@@ -22,3 +22,12 @@ export async function insertHomeownerAction(
 ) {
   await tx.insert(auditEvents).values({ tenantId, actorType: 'homeowner', ...event })
 }
+
+// Something the AI receptionist did on a call, like booking a visit. No person to name.
+export async function insertAiAction(
+  tenantId: string,
+  event: Omit<UserAction, 'actorUserId'>,
+  tx: Db = db,
+) {
+  await tx.insert(auditEvents).values({ tenantId, actorType: 'ai', ...event })
+}

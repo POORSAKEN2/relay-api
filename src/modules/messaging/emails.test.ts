@@ -2,14 +2,14 @@ import { beforeEach, expect, it } from 'vitest'
 import { createTenant, resetDb } from '../../../test/helpers.ts'
 import { db } from '../../db/client.ts'
 import { messages } from '../../db/schema.ts'
-import { sendEmail } from './email.ts'
+import { queueEmail } from './emails.ts'
 
 beforeEach(resetDb)
 
 it('saves a queued email, for the sender loop to send', async () => {
   const tenant = await createTenant('desert')
 
-  await sendEmail(tenant.id, {
+  await queueEmail(tenant.id, {
     contact: 'sam@example.com',
     kind: 'booking_confirmation',
     subject: 'Your visit is booked: Tue, Jan 8',

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { asc, eq } from 'drizzle-orm'
 import request from 'supertest'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -7,7 +8,9 @@ import { db } from '../../db/client.ts'
 import {
   arrivalWindows,
   auditEvents,
+  bookingDrafts,
   callbackRequests,
+  calls,
   consentEvents,
   customers,
   jobItems,
@@ -22,7 +25,13 @@ import {
 import { weekdayOf } from '../../lib/labels.ts'
 import { hashLinkToken } from '../../lib/link-token.ts'
 import { emitToTenant } from '../../realtime/index.ts'
-import { CONSENT_WORDING, expireHolds, WAITLIST_CONSENT_WORDING } from './online-booking.service.ts'
+import { BookingInput } from './online-booking.schemas.ts'
+import {
+  bookHomeownerVisit,
+  CONSENT_WORDING,
+  expireHolds,
+  WAITLIST_CONSENT_WORDING,
+} from './online-booking.service.ts'
 
 vi.mock('../../realtime/index.ts', () => ({ emitToTenant: vi.fn() }))
 
@@ -256,6 +265,35 @@ describe('POST /api/online-booking/bookings', () => {
       jobId: job.id,
       dates: [TUESDAY],
     })
+    expect(emitToTenant).not.toHaveBeenCalledWith(
+      shop.tenant.id,
+      'booking.priority',
+      expect.anything(),
+    )
+  })
+
+  it('confirms the booking by text, sent because the consent is saved first, and by email', async () => {
+    const shop = await createServingShop()
+
+    const res = await post('bookings', bookingBody(shop)).expect(201)
+
+    const sent = await db.select().from(messages).orderBy(messages.channel)
+    expect(sent).toEqual([
+      expect.objectContaining({
+        channel: 'email',
+        contact: 'sam@example.com',
+        kind: 'booking_confirmation',
+        status: 'queued',
+        jobId: res.body.jobId,
+      }),
+      expect.objectContaining({
+        channel: 'sms',
+        contact: '+14805550199',
+        kind: 'booking_confirmation',
+        status: 'queued',
+        jobId: res.body.jobId,
+      }),
+    ])
   })
 
   it('records no consent when the box isn’t ticked', async () => {
@@ -272,6 +310,10 @@ describe('POST /api/online-booking/bookings', () => {
     const res = await post('bookings', bookingBody(shop, { priorityService: true })).expect(201)
     const [job] = await db.select().from(jobs).where(eq(jobs.id, res.body.jobId))
     expect(job).toMatchObject({ priority: true, priorityFeeCents: 4900, vulnerableOccupant: false })
+    expect(emitToTenant).toHaveBeenCalledWith(shop.tenant.id, 'booking.priority', {
+      jobId: job.id,
+      dates: [TUESDAY],
+    })
   })
 
   it('writes the booked lines: the service, and priority service when chosen', async () => {
@@ -310,6 +352,10 @@ describe('POST /api/online-booking/bookings', () => {
     const res = await post('bookings', bookingBody(shop, { vulnerableOccupant: true })).expect(201)
     const [job] = await db.select().from(jobs).where(eq(jobs.id, res.body.jobId))
     expect(job).toMatchObject({ priority: true, priorityFeeCents: 0, vulnerableOccupant: true })
+    expect(emitToTenant).toHaveBeenCalledWith(shop.tenant.id, 'booking.priority', {
+      jobId: job.id,
+      dates: [TUESDAY],
+    })
   })
 
   it('reuses a customer with the same phone and name, and their saved address', async () => {
@@ -387,7 +433,7 @@ describe('POST /api/online-booking/bookings', () => {
         kind: 'booking_confirmation',
         status: 'queued',
         contact: 'sam@example.com',
-        subject: 'Your visit is booked: Tue, Jan 8',
+        subject: 'Your visit with desert HVAC is booked',
         jobId: res.body.jobId,
       }),
       expect.objectContaining({
@@ -396,14 +442,12 @@ describe('POST /api/online-booking/bookings', () => {
         status: 'queued',
         contact: '+14805550199',
         body: expect.stringMatching(
-          /^desert HVAC: you're booked for AC repair on Tue, Jan 8, 8 AM - 12 PM at 4 Cactus Rd\. Pay at the visit\. Change or cancel: https:\/\/desert\.localhost\/manage\/[\w-]{24} Reply STOP to opt out\.$/,
+          /^desert HVAC: you're booked for AC repair on Tue, Jan 8, 8 AM-12 PM\. We'll text you a reminder before the visit\. Change or cancel: https:\/\/desert\.localhost\/manage\/[\w-]{24} Reply STOP to opt out\.$/,
         ),
         jobId: res.body.jobId,
       }),
     ])
     expect(sent[0].customerId).toBe(sent[1].customerId)
-    expect(sent[0].body).toContain('Address: 4 Cactus Rd, Mesa, AZ 85201')
-    expect(sent[0].body).toContain('Questions? Call (480) 555-0100 or reply to this email.')
   })
 
   it('gives the visit a private link to change or cancel it', async () => {
@@ -483,6 +527,77 @@ describe('POST /api/online-booking/bookings', () => {
     const window = await post('bookings', bookingBody(shop, { windowId: other.tueMorning.id }))
     expect(window.status).toBe(404)
     await post('bookings', bookingBody(shop), 'nope').expect(404)
+  })
+
+  describe('from a missed-call text', () => {
+    async function missedCall(shop: Shop, values: Partial<typeof calls.$inferInsert> = {}) {
+      const [call] = await db
+        .insert(calls)
+        .values({
+          tenantId: shop.tenant.id,
+          providerSid: randomUUID(),
+          fromPhone: '+14805550199',
+          toPhone: '+14805550100',
+          ...values,
+        })
+        .returning()
+      return call
+    }
+
+    async function bookedJob(body: Record<string, unknown>) {
+      const res = await post('bookings', body).expect(201)
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, res.body.jobId))
+      return job
+    }
+
+    it('counts as recovered: source text_back, linked to the call', async () => {
+      const shop = await createServingShop()
+      const call = await missedCall(shop)
+
+      const job = await bookedJob(bookingBody(shop, { callId: call.id }))
+
+      expect(job).toMatchObject({ source: 'text_back', callId: call.id })
+      const [audit] = await db.select().from(auditEvents)
+      expect(audit.data).toMatchObject({ source: 'text_back' })
+    })
+
+    it('books as a plain web booking when the call id is no good', async () => {
+      const shop = await createServingShop()
+      const other = await createServingShop('other')
+      const theirs = await missedCall(other)
+      const answered = await missedCall(shop, { answeredBy: 'office' })
+      const old = await missedCall(shop, { startedAt: new Date(Date.now() - 8 * 86_400_000) })
+      // Room for all five bookings below in one window.
+      await db
+        .update(arrivalWindows)
+        .set({ jobCap: 5 })
+        .where(eq(arrivalWindows.id, shop.tueMorning.id))
+
+      for (const callId of [randomUUID(), theirs.id, answered.id, old.id, 'not-a-uuid']) {
+        const job = await bookedJob(bookingBody(shop, { callId }))
+        expect(job).toMatchObject({ source: 'web', callId: null })
+      }
+    })
+
+    it('remembers the call through a draft resumed later', async () => {
+      const shop = await createServingShop()
+      const call = await missedCall(shop)
+      const [draft] = await db
+        .insert(bookingDrafts)
+        .values({
+          tenantId: shop.tenant.id,
+          token: 'draft-token',
+          name: 'Sam Reed',
+          phone: '+14805550199',
+          zip: '85201',
+          answers: { callId: call.id },
+        })
+        .returning()
+
+      const job = await bookedJob(bookingBody(shop, { draftToken: draft.token }))
+
+      expect(job).toMatchObject({ source: 'text_back', callId: call.id })
+    })
   })
 
   it('lists every missing piece of an empty form at once', async () => {
@@ -617,5 +732,75 @@ describe('expireHolds', () => {
     expect(await statusOf(stale.id)).toBe('expired')
     expect(await statusOf(fresh.id)).toBe('held')
     await post('bookings', bookingBody(shop)).expect(201)
+  })
+})
+
+describe('bookHomeownerVisit', () => {
+  async function aiCall(shop: Shop) {
+    const [call] = await db
+      .insert(calls)
+      .values({
+        tenantId: shop.tenant.id,
+        providerSid: randomUUID(),
+        fromPhone: '+14805550199',
+        toPhone: '+14805550100',
+        answeredBy: 'ai',
+        disclosedAt: new Date(),
+      })
+      .returning()
+    return call
+  }
+
+  it('books for the AI: source ai, the call linked, the spoken yes kept as proof', async () => {
+    const shop = await createServingShop()
+    const call = await aiCall(shop)
+    const input = BookingInput.parse(bookingBody(shop, { consent: false, email: '' }))
+
+    const { jobId } = await bookHomeownerVisit(shop.tenant, input, {
+      source: 'ai',
+      callId: call.id,
+      ip: null,
+      consent: { source: 'call', wording: 'Can we text you?' },
+    })
+
+    const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId))
+    expect(job).toMatchObject({ source: 'ai', callId: call.id, status: 'booked' })
+    expect(await db.select().from(consentEvents)).toEqual([
+      expect.objectContaining({
+        channel: 'sms',
+        source: 'call',
+        wording: 'Can we text you?',
+        callId: call.id,
+        jobId,
+        granted: true,
+      }),
+    ])
+    const [confirmation] = await db
+      .select()
+      .from(messages)
+      .where(eq(messages.kind, 'booking_confirmation'))
+    expect(confirmation.status).toBe('queued')
+    const [audit] = await db.select().from(auditEvents)
+    expect(audit).toMatchObject({ actorType: 'ai', actorUserId: null, action: 'job.booked' })
+  })
+
+  it('books without consent when the caller said no to texts: the confirmation is blocked', async () => {
+    const shop = await createServingShop()
+    const call = await aiCall(shop)
+    const input = BookingInput.parse(bookingBody(shop, { email: '' }))
+
+    await bookHomeownerVisit(shop.tenant, input, {
+      source: 'ai',
+      callId: call.id,
+      ip: null,
+      consent: null,
+    })
+
+    expect(await db.select().from(consentEvents)).toHaveLength(0)
+    const [confirmation] = await db
+      .select()
+      .from(messages)
+      .where(eq(messages.kind, 'booking_confirmation'))
+    expect(confirmation).toMatchObject({ status: 'blocked', blockedReason: 'no_consent' })
   })
 })

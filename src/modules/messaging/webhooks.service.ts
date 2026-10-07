@@ -2,7 +2,10 @@ import { z } from 'zod'
 import { db, type Tx } from '../../db/client.ts'
 import { Phone } from '../../lib/fields.ts'
 import { logger } from '../../lib/logger.ts'
+import { emitToTenant } from '../../realtime/index.ts'
+import { textBackMissedCall } from '../calls/calls.service.ts'
 import * as queries from './messaging.queries.ts'
+import { HOMEOWNER_KINDS } from './rules.ts'
 
 // What httpSMS posts to /api/webhooks/httpsms: a CloudEvent. Field names differ between events
 // (a text's id is `id` in some and `message_id` in others), so every data field is optional.
@@ -25,14 +28,16 @@ export const HttpSmsEvent = z.object({
 })
 export type HttpSmsEvent = z.infer<typeof HttpSmsEvent>
 
-// Replies that opt out of texts, or back in. Carriers use the same words.
+// Replies that opt out of texts, or back in. Carriers use the same words. A START from someone
+// who never ticked the consent box counts as consent; they asked for texts.
 const STOP_WORDS = ['STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT']
 const START_WORDS = ['START', 'UNSTOP']
 
 // One event, in one transaction with the record that it arrived: if handling fails, httpSMS
 // retries and the retry isn't mistaken for a repeat.
 export async function handleHttpSmsEvent(event: HttpSmsEvent) {
-  await db.transaction(async (tx) => {
+  // The thread a homeowner texted into, if any. Announced only once the text is saved for good.
+  const received = await db.transaction(async (tx) => {
     if (!(await queries.recordWebhookEvent(event.id, tx))) return // a repeat
     const { data } = event
     const text = {
@@ -67,8 +72,7 @@ export async function handleHttpSmsEvent(event: HttpSmsEvent) {
         }
         break
       case 'message.phone.received':
-        await receiveText(event, tx)
-        break
+        return receiveText(event, tx)
       case 'message.call.missed':
         await recordMissedCall(event, tx)
         break
@@ -80,15 +84,18 @@ export async function handleHttpSmsEvent(event: HttpSmsEvent) {
         break
     }
   })
+
+  if (received) emitToTenant(received.tenantId, 'inbox.updated', { contact: received.contact })
 }
 
 // A text from a homeowner: saved for the inbox, and a STOP or START changes their consent.
+// Returns the thread it landed in, or undefined when it isn’t for a contractor.
 async function receiveText(event: HttpSmsEvent, tx: Tx) {
   const found = await findSides(event, tx)
   if (!found?.contact) return
   const { tenantId, contact } = found
   const body = event.data.content ?? ''
-  const message = await queries.insertText(
+  const message = await queries.insertMessage(
     {
       tenantId,
       channel: 'sms',
@@ -103,21 +110,25 @@ async function receiveText(event: HttpSmsEvent, tx: Tx) {
     tx,
   )
 
-  const word = body.trim().toUpperCase()
+  // The whole reply is the command. Trailing dots and bangs are dropped ("Stop.") because no
+  // carrier catches STOP on an httpSMS phone: Relay is the only thing honoring it.
+  const word = body
+    .trim()
+    .replace(/[.!]+$/, '')
+    .toUpperCase()
   if (STOP_WORDS.includes(word) || START_WORDS.includes(word)) {
-    await queries.insertReplyConsent(
-      tenantId,
-      { contact, granted: START_WORDS.includes(word), messageId: message.id },
-      tx,
-    )
+    const granted = START_WORDS.includes(word)
+    await queries.insertReplyConsent(tenantId, { contact, granted, messageId: message.id }, tx)
+    if (!granted) await queries.blockWaitingTexts(tenantId, contact, HOMEOWNER_KINDS, tx)
   }
+  return { tenantId, contact }
 }
 
-// A call nobody answered. Texting the caller back is the text-back feature's job.
+// A call nobody answered: saved, and the caller gets a text with a booking link.
 async function recordMissedCall(event: HttpSmsEvent, tx: Tx) {
   const found = await findSides(event, tx)
   if (!found) return
-  await queries.insertMissedCall(
+  const callId = await queries.insertMissedCall(
     found.tenantId,
     {
       providerSid: event.data.message_id ?? event.id,
@@ -130,6 +141,8 @@ async function recordMissedCall(event: HttpSmsEvent, tx: Tx) {
     },
     tx,
   )
+  // No id: the call was already saved by an earlier copy of this event, which texted already.
+  if (callId) await textBackMissedCall(found.tenantId, callId, tx)
 }
 
 // The contractor (by the phone's own number) and the other side's number as E.164, which is

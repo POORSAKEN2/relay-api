@@ -3,8 +3,10 @@ import { sendPhoto } from '../../lib/send-photo.ts'
 import { requireRole } from '../../middleware/auth.ts'
 import { JobParams, JobPhotoParams, NoteInput } from '../dispatch/dispatch.schemas.ts'
 import {
+  CompleteInput,
   DecisionInput,
   EquipmentInput,
+  LinkParams,
   NoAccessInput,
   OnMyWayInput,
   RepairInput,
@@ -89,7 +91,8 @@ technicianJobsRoutes.post('/my-jobs/:jobId/no-access', technician, async (req, r
 
 technicianJobsRoutes.post('/my-jobs/:jobId/complete', technician, async (req, res) => {
   const { jobId } = JobParams.parse(req.params)
-  res.json(await technicianJobs.completeJob(req.user!, jobId))
+  const { paidInPerson } = CompleteInput.parse(req.body)
+  res.json(await technicianJobs.completeJob(req.user!, jobId, paidInPerson))
 })
 
 technicianJobsRoutes.post('/my-jobs/:jobId/repairs', technician, async (req, res) => {
@@ -119,4 +122,9 @@ technicianJobsRoutes.patch('/my-jobs/:jobId/equipment', technician, async (req, 
   const { jobId } = JobParams.parse(req.params)
   const input = EquipmentInput.parse(req.body)
   res.json(await technicianJobs.setEquipment(req.user!, jobId, input))
+})
+
+technicianJobsRoutes.get('/job-links/:token', technician, async (req, res) => {
+  const { token } = LinkParams.parse(req.params)
+  res.json(await technicianJobs.openJobLink(req.user!, token))
 })

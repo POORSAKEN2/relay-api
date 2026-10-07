@@ -1,14 +1,8 @@
-import {
-  createHash,
-  createHmac,
-  randomBytes,
-  randomInt,
-  randomUUID,
-  timingSafeEqual,
-} from 'node:crypto'
+import { createHmac, randomInt, randomUUID, timingSafeEqual } from 'node:crypto'
 import { env } from '../../config/env.ts'
 import type { User, UserRole } from '../../db/schema.ts'
 import { HttpError } from '../../lib/http-error.ts'
+import { hashToken, newToken } from '../../lib/tokens.ts'
 import { sendText } from '../messaging/sms.ts'
 import * as queries from './accounts.queries.ts'
 import { hashPassword, verifyPassword } from './passwords.ts'
@@ -18,6 +12,7 @@ const DAY_MS = 24 * 60 * 60 * 1000
 const SESSION_DAYS = 30
 const RENEW_WHEN_DAYS_LEFT = 15
 const CODE_MINUTES = 10
+const LINK_DAYS = 7
 const CODES_PER_HOUR = 5
 const CODE_TRIES = 5
 
@@ -44,7 +39,7 @@ export async function signIn(email: string, password: string) {
 }
 
 async function startSession(user: User) {
-  const token = randomBytes(32).toString('base64url')
+  const token = newToken(32)
   const expiresAt = new Date(Date.now() + SESSION_DAYS * DAY_MS)
   await queries.insertSession({ id: hashToken(token), userId: user.id, expiresAt })
   return { token, expiresAt, user: toSessionUser(user) }
@@ -115,6 +110,33 @@ function sameHash(a: string, b: string): boolean {
   return timingSafeEqual(Buffer.from(a, 'hex'), Buffer.from(b, 'hex'))
 }
 
+// A one-time link for an owner or office user to sign in with: the invite, or a new link when
+// they have no password to fall back on. Only the newest link a user has can be used.
+// Returns the token to put in the emailed link.
+export async function createSignInLink(userId: string): Promise<string> {
+  const token = newToken(32)
+  await queries.replaceLink(userId, {
+    tokenHash: hashToken(token),
+    expiresAt: new Date(Date.now() + LINK_DAYS * DAY_MS),
+  })
+  return token
+}
+
+// Signs in with the emailed link, once. An unknown, used or expired link and a deactivated
+// user all get the same answer.
+export async function signInWithLink(token: string) {
+  const link = await queries.spendLink(hashToken(token), new Date())
+  const user = link && (await queries.findUserById(link.userId))
+  if (!user || user.disabledAt) {
+    throw new HttpError(
+      401,
+      'unauthorized',
+      'That link is wrong or has expired. Ask for a new one.',
+    )
+  }
+  return startSession(user)
+}
+
 // The session's user, or null if the token is unknown or expired.
 // With `renew`, a session with under 15 days left is extended to 30 days;
 // `renewed` tells the caller to send the cookie again.
@@ -136,10 +158,6 @@ export async function signOut(token: string) {
 
 export function cleanupExpiredSessions(): Promise<number> {
   return queries.deleteExpiredSessions(new Date())
-}
-
-function hashToken(token: string): string {
-  return createHash('sha256').update(token).digest('hex')
 }
 
 function toSessionUser(user: User): SessionUser {

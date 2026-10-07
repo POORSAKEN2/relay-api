@@ -4,12 +4,13 @@ import { HttpError } from '../../lib/http-error.ts'
 import { formatDay, formatPhone, formatWindow, textWindow } from '../../lib/labels.ts'
 import { hashLinkToken } from '../../lib/link-token.ts'
 import { tenantUrl } from '../../lib/tenant-url.ts'
+import { hashToken, newToken } from '../../lib/tokens.ts'
 import { emitToTenant } from '../../realtime/index.ts'
 import * as audit from '../audit/audit.queries.ts'
 import * as dispatch from '../dispatch/dispatch.queries.ts'
 import { changeStatus } from '../dispatch/dispatch.service.ts'
 import { textTechnician } from '../dispatch/technician-texts.ts'
-import { sendEmail } from '../messaging/email.ts'
+import { queueEmail } from '../messaging/emails.ts'
 import { sendText } from '../messaging/sms.ts'
 import {
   addressLine,
@@ -79,8 +80,16 @@ export async function rescheduleVisit(tenant: Tenant, token: string, input: Resc
     if (input.date === job.date && input.windowId === job.windowId) return null
 
     const slot = await reserveOpenWindow(tx, tenant.id, input.windowId, input.date, job.id)
+    // A new link with the technician's text: only its hash is kept, so the older one stops
+    // working.
+    const linkToken = job.technicianId ? newToken(16) : null
     // A new time makes the old arrival time meaningless.
-    await dispatch.updateJob(tenant.id, job.id, { ...slot, etaAt: null }, tx)
+    await dispatch.updateJob(
+      tenant.id,
+      job.id,
+      { ...slot, etaAt: null, ...(linkToken ? { techLinkHash: hashToken(linkToken) } : {}) },
+      tx,
+    )
     await audit.insertHomeownerAction(
       tenant.id,
       {
@@ -101,7 +110,9 @@ export async function rescheduleVisit(tenant: Tenant, token: string, input: Resc
       link: tenantUrl(tenant, `/manage/${token}`),
     })
     await tellHomeowner(tenant.id, found, changedText(change), changedEmail(change), tx)
-    if (job.technicianId) await textTechnician(tenant.id, job.id, job.technicianId, 'changed', tx)
+    if (job.technicianId) {
+      await textTechnician(tenant.id, job.id, job.technicianId, 'changed', linkToken, tx)
+    }
     return { jobId: job.id, dates: [...new Set([job.date, input.date])] }
   })
 
@@ -131,7 +142,7 @@ export async function cancelVisit(tenant: Tenant, token: string) {
         link: tenantUrl(tenant, '/'),
       })
       await tellHomeowner(tenant.id, job, cancelledText(change), cancelledEmail(change), tx)
-      if (technicianId) await textTechnician(tenant.id, job.id, technicianId, 'cancelled', tx)
+      if (technicianId) await textTechnician(tenant.id, job.id, technicianId, 'cancelled', null, tx)
     },
   })
   return { status: 'cancelled' as const }
@@ -164,6 +175,6 @@ async function tellHomeowner(
     await sendText(tenantId, { ...about, contact: job.customerPhone, body: text }, tx)
   }
   if (job.customerEmail) {
-    await sendEmail(tenantId, { ...about, contact: job.customerEmail, ...email }, tx)
+    await queueEmail(tenantId, { ...about, contact: job.customerEmail, ...email }, tx)
   }
 }
