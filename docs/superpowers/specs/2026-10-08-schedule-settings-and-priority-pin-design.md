@@ -102,14 +102,15 @@ Messages follow the existing style, for example "Windows can't overlap: 8:00 AM 
 
 ### `POST /api/schedule/check`
 
-Body: `ScheduleInput`. Saves nothing. Returns `{ affectedJobs: number }`: upcoming jobs that would
-no longer match a window with the same start and end.
+Body: `ScheduleInput`. Saves nothing. Returns `{ affectedJobs: number }`: upcoming jobs that fit a
+saved window today (same weekday, start and end) and would fit none in the new schedule.
 
 A job counts when:
 - its status isn't inactive (`cancelled`, `expired`) or `done`,
 - `window_starts_at >= now()`, and
-- in the new schedule, its local weekday isn't in `windowDays`, or no window has the job's local
-  start **and** end time.
+- it fits a saved window now, and in the new schedule its local weekday isn't in `windowDays` or
+  no window has the job's local start **and** end time. A job already under "Other times"
+  doesn't count.
 
 Jobs on unchanged windows don't count, so saving an unchanged schedule returns 0. A cap lowered
 below what's booked doesn't count either: the window just shows as full, as it does today.
@@ -164,7 +165,7 @@ deletes run before inserts, and in-place updates never change `starts_at`.
   same way if they get through.
 - **Save** first calls `check`. If `affectedJobs > 0`, a `ConfirmDialog`: title "Upcoming jobs
   booked", message "N upcoming jobs are booked in windows you're changing. They'll keep their
-  times and show under Other times on the board.", confirm "Save anyway". Otherwise it saves
+  booked times. Move them on the Dispatch board if needed.", confirm "Save anyway". Otherwise it saves
   straight away. A toast "Schedule saved" on success.
 - Leaving the page with unsaved changes isn't blocked (no other settings page blocks it).
 
@@ -183,15 +184,14 @@ Web, `src/routes/dashboard.tsx` and a new `src/features/dispatch/priority-strip.
 - Between the day summary and the board, a **Priority** section lists the day's priority jobs
   that aren't `done`, in board order (window start, then booked time). Hidden when there are
   none.
-- Each is a `JobCard` with the technician's name (or "Unassigned") and its window label
-  (`9:00 AM – 12:00 PM`, or the job's own times under "Other times"). Clicking opens the job
+- Each is a `JobCard` with the technician's name (or "Unassigned"), under its window label
+  (`windowLabel`, which the board API already sends, e.g. `8 AM–12 PM`). Clicking opens the job
   drawer, like any card.
 - Desktop: the cards sit in a wrapping row with a red-tinted header, "Priority · 2 jobs". Phone:
   the same section above the window list.
 - The jobs **also stay in their window × technician cell**, so drag-and-drop and capacity counts
   don't change. The strip's cards aren't draggable.
-- A pure helper `priorityJobs(board)` in `place-jobs.ts` picks and orders them, plus a
-  `windowLabel(board, job)` helper.
+- A pure helper `priorityJobs(board)` in `place-jobs.ts` picks them, keeping the API's order.
 
 ## Testing
 
@@ -203,14 +203,15 @@ API (`schedule.test.ts`, supertest against the test database, like `settings.tes
 - PUT with an unchanged schedule changes nothing (same ids).
 - Validation: overlap, end before start, cap 0 and 21, bad minutes, no window days, 9 windows.
 - check: 0 for unchanged; counts a job in a removed window, in a window whose end changed, and on
-  an unticked day; ignores past, cancelled and done jobs, and a lowered cap.
+  an unticked day; ignores past, cancelled and done jobs, jobs already under Other times, and a
+  lowered cap.
 - 403 for a technician.
 - The booking page's availability uses the new windows after a save (one test through the
   existing availability route).
 
 Web (vitest):
 - `rules.ts`: overlap, ordering, cap range, "add window" start time.
-- `priorityJobs` and `windowLabel`: order, `done` excluded, other-times label.
+- `priorityJobs`: order kept, `done` and non-priority excluded.
 
 Manual: change windows on the Schedule page with a booked job in a changed window, see the
 warning, save, and check the board and the booking page.
