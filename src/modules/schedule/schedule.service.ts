@@ -107,3 +107,43 @@ async function syncWindows(tenantId: string, schedule: Schedule, tx: Tx) {
   for (const { id, ...values } of updates) await queries.updateWindow(tenantId, id, values, tx)
   await queries.insertWindows(tenantId, inserts, tx)
 }
+
+// A place a job can hold: a weekday and a window's local start and end ('HH:MM').
+type Place = { weekday: number; startsAt: string; endsAt: string }
+
+function fits(job: Place, places: Place[]) {
+  return places.some(
+    (place) =>
+      place.weekday === job.weekday &&
+      place.startsAt === job.startsAt &&
+      place.endsAt === job.endsAt,
+  )
+}
+
+// Every weekday × window of a schedule.
+export function placesOf(schedule: Pick<Schedule, 'windows' | 'windowDays'>): Place[] {
+  return schedule.windowDays.flatMap((weekday) =>
+    schedule.windows.map(({ startsAt, endsAt }) => ({ weekday, startsAt, endsAt })),
+  )
+}
+
+// Jobs that sit in a window today and would sit in none after the change. A job already
+// outside every window ("Other times") isn't counted, and neither is a lowered cap: the window
+// just shows as full.
+export function countAffected(jobs: Place[], before: Place[], after: Place[]): number {
+  return jobs.filter((job) => fits(job, before) && !fits(job, after)).length
+}
+
+// How many upcoming jobs a change would touch, so the page can warn before saving.
+export async function checkSchedule(tenantId: string, schedule: Schedule) {
+  const [jobs, saved] = await Promise.all([
+    queries.listUpcomingJobs(tenantId),
+    queries.listWindows(tenantId),
+  ])
+  const before = saved.map((window) => ({
+    weekday: window.weekday,
+    startsAt: hhmm(window.startsAt),
+    endsAt: hhmm(window.endsAt),
+  }))
+  return { affectedJobs: countAffected(jobs, before, placesOf(schedule)) }
+}

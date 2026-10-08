@@ -1,6 +1,8 @@
-import { and, asc, eq, inArray } from 'drizzle-orm'
+import { and, asc, eq, gte, inArray, notInArray, sql } from 'drizzle-orm'
 import { type Db, db, type Tx } from '../../db/client.ts'
-import { arrivalWindows, businessHours } from '../../db/schema.ts'
+import { arrivalWindows, businessHours, jobs, tenants } from '../../db/schema.ts'
+import { INACTIVE_STATUSES } from '../booking/booking.queries.ts'
+import { local } from '../dispatch/dispatch.queries.ts'
 
 // Tenant-scoped: every query takes tenantId first. Times are the contractor's wall clock, as
 // Postgres returns them ('08:00:00').
@@ -70,4 +72,27 @@ export async function insertWindows(
 ) {
   if (rows.length === 0) return
   await tx.insert(arrivalWindows).values(rows.map((row) => ({ tenantId, ...row })))
+}
+
+// Jobs from now on still holding a place, as the contractor's wall clock: weekday and
+// 'HH:MM' start and end.
+export function listUpcomingJobs(tenantId: string, tx: Db = db) {
+  return tx
+    .select({
+      weekday:
+        sql<number>`extract(dow from ${jobs.windowStartsAt} at time zone ${tenants.timezone})`.mapWith(
+          Number,
+        ),
+      startsAt: local(jobs.windowStartsAt, 'HH24:MI'),
+      endsAt: local(jobs.windowEndsAt, 'HH24:MI'),
+    })
+    .from(jobs)
+    .innerJoin(tenants, eq(tenants.id, jobs.tenantId))
+    .where(
+      and(
+        eq(jobs.tenantId, tenantId),
+        notInArray(jobs.status, [...INACTIVE_STATUSES, 'done' as const]),
+        gte(jobs.windowStartsAt, sql`now()`),
+      ),
+    )
 }
