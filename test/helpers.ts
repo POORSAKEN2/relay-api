@@ -1,5 +1,5 @@
 import { randomInt, randomUUID } from 'node:crypto'
-import { sql } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { db } from '../src/db/client.ts'
 import {
   arrivalWindows,
@@ -164,8 +164,12 @@ export async function createJob(
 
 // Starts a session without going through the rate-limited sign-in route.
 // Returns the Cookie header for later requests.
+// Each role signs in through its own portal; technicians through a texted code.
 export async function signIn(email: string): Promise<string> {
-  const { token } = await accounts.signIn(email, PASSWORD)
+  const [user] = await db.select().from(users).where(eq(users.email, email))
+  if (user.role === 'technician') return signInTechnician(user)
+  const portal = user.role === 'superadmin' ? 'admin' : 'contractor'
+  const { token } = await accounts.signIn(email, PASSWORD, portal)
   return `${SESSION_COOKIE}=${token}`
 }
 

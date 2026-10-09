@@ -31,8 +31,10 @@ it('refuses email sign-in at a turned-off contractor, but only after the passwor
   const owner = await createUser('owner', desert.id)
   await setStatus(desert.id, 'suspended')
 
-  await expect(accounts.signIn(owner.email, PASSWORD)).rejects.toMatchObject(suspendedError)
-  await expect(accounts.signIn(owner.email, 'wrong password')).rejects.toMatchObject({
+  await expect(accounts.signIn(owner.email, PASSWORD, 'contractor')).rejects.toMatchObject(
+    suspendedError,
+  )
+  await expect(accounts.signIn(owner.email, 'wrong password', 'contractor')).rejects.toMatchObject({
     status: 401,
     code: 'unauthorized',
   })
@@ -97,5 +99,5 @@ it('never affects the superadmin', async () => {
 
   const me = await request(app).get('/api/auth/me').set('Cookie', cookie).expect(200)
   expect(me.body.user).toMatchObject({ id: admin.id, role: 'superadmin' })
-  await expect(accounts.signIn(admin.email, PASSWORD)).resolves.toBeTruthy()
+  await expect(accounts.signIn(admin.email, PASSWORD, 'admin')).resolves.toBeTruthy()
 })

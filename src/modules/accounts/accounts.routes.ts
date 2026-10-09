@@ -29,8 +29,8 @@ const signInLimit = rateLimit({
 })
 
 accountsRoutes.post('/auth/sign-in', signInLimit, async (req, res) => {
-  const { email, password } = SignInInput.parse(req.body)
-  const session = await accounts.signIn(email, password)
+  const { email, password, portal } = SignInInput.parse(req.body)
+  const session = await accounts.signIn(email, password, portal)
   setSessionCookie(res, session.token, session.expiresAt)
   res.json({ user: session.user })
 })

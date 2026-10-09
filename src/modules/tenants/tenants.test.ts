@@ -78,7 +78,11 @@ describe('POST /api/admin/tenants', () => {
       contactPhone: '+13035550142',
     })
     expect(res.body.owner).toMatchObject({ name: 'Casey Owner', email: 'casey@coolbreeze.test' })
-    const session = await accounts.signIn('casey@coolbreeze.test', res.body.owner.temporaryPassword)
+    const session = await accounts.signIn(
+      'casey@coolbreeze.test',
+      res.body.owner.temporaryPassword,
+      'contractor',
+    )
     expect(session.user).toMatchObject({ role: 'owner', tenantId: res.body.tenant.id })
   })
 
