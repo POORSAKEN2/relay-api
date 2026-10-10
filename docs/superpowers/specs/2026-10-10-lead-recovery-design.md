@@ -1,6 +1,6 @@
 # Lead recovery: next-morning texts and the safety stop
 
-Date: 2026-10-10. Status: proposed. Plan: `docs/superpowers/plans/2026-10-10-lead-recovery.md`.
+Date: 2026-10-10. Status: built. Plan: `docs/superpowers/plans/2026-10-10-lead-recovery.md`.
 Depends on: nothing new. Roadmap: `specs/2026-10-06-mvp-remaining-work.md` (module 5, and
 "after the receptionist" item 5). Repos: `relay-api` and `relay-web`.
 

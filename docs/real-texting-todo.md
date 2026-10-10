@@ -58,10 +58,9 @@ missing, and what a US launch would need on top.
 - [ ] The resume link (`bookingLink` in `online-booking.service.ts`) is always
       `https://<host>/`. A homeowner's phone can't open `localhost`, so a demo needs the web app
       on a public address (a tunnel or a deploy) and this link pointing at it.
-- [ ] Decide what happens after the gas / carbon monoxide safety stop. A homeowner who taps
-      "Yes" there already has a draft, so an hour later they would get "finish your booking",
-      right after being told not to book online. Most likely: mark the draft so it is never
-      texted (one more column, set by a small API call from the safety screen).
+- [x] After the gas / carbon monoxide safety stop the draft is marked (`safety_stopped_at`, set
+      by `POST /online-booking/drafts/:token/safety-stop` from the safety screen) and never gets
+      the recovery text. Finishing step 4 after "I tapped Yes by mistake" clears it.
 - [ ] Now that texts really go out, tell the homeowner in the wizard's Exit dialog: "We'll text
       you a link to finish."
 - [ ] Make the 5-codes-per-hour cap atomic (delete, count and insert in one transaction that
@@ -77,7 +76,9 @@ missing, and what a US launch would need on top.
 - [ ] "Call us instead" in the wizard's Exit dialog. Needs the contractor's office phone in
       the branding API, which doesn't return it today.
 - [ ] Scheduled cleanup of drafts older than about 30 days.
-- [ ] Recovery wait (60 minutes) and cutoff (24 hours) as contractor settings, not constants.
+- [ ] Recovery timing as contractor settings, not constants. Today the texts go the first
+      morning after (when quiet hours end), at least 60 minutes after the lead went quiet
+      (`online-booking/recovery.ts`).
 - [ ] A second reminder text, if the first one gets a good response.
 - [ ] A per-contractor switch to turn recovery texts off.
 - [ ] Office alerts by email too (module 10).

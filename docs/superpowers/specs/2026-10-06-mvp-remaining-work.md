@@ -11,7 +11,7 @@ Date: 2026-10-06. Status: plan of record. Source: the MVP scope, booking flows a
 | 2 | Online booking | Built (no online payment, decided 2026-10-03) | Homeowner reschedule / cancel page (`manage_link_hash` exists, no page) |
 | 3 | Missed-call text-back | Call is recorded (httpSMS `message.call.missed`); **no text goes out**; **no inbox** | Text-back sender, two-way inbox |
 | 4 | AI receptionist | Telnyx setup stub only | Everything: LLM client, engine, test console, wrap-up, phone line |
-| 5 | Lead recovery | Abandoned-booking text built | Missed-caller reminder (`missed_caller_reminder`) |
+| 5 | Lead recovery | Built: abandoned-booking text and missed-caller reminder, the next morning with three open times; never after the gas safety stop | — |
 | 6 | Scheduling and dispatch | Built | "Booking changed" text to the homeowner (`booking_changed`) |
 | 7 | Customers | Built | — |
 | 8 | Technician job page | Built | — |
@@ -77,7 +77,8 @@ Small items that close the remaining MVP gaps, in rough priority:
 2. **Call log** screen: every call, who answered, outcome, transcript, summary.
 3. Homeowner **reschedule / cancel** page from the confirmation link.
 4. **Waitlist offer** text when a window frees up.
-5. **Missed-caller reminder**: one text the next morning to a missed caller who didn't book.
+5. ~~**Missed-caller reminder**~~: built 2026-10-10 (`specs/2026-10-10-lead-recovery-design.md`).
+   Only callers who already agreed to texts get it, until the lawyer answers question 2.
 6. **Booking changed** text when the office moves a job.
 
 ## Defaults chosen in these specs (confirm or change)
