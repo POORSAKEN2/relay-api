@@ -5,6 +5,7 @@ import { HttpError } from '../../lib/http-error.ts'
 import { hashToken, newToken } from '../../lib/tokens.ts'
 import { sendText } from '../messaging/sms.ts'
 import * as queries from './accounts.queries.ts'
+import type { Portal } from './accounts.schemas.ts'
 import { hashPassword, verifyPassword } from './passwords.ts'
 
 const MINUTE_MS = 60 * 1000
@@ -24,7 +25,7 @@ export type SessionUser = {
   tenantId: string | null
 }
 
-export async function signIn(email: string, password: string) {
+export async function signIn(email: string, password: string, portal: Portal) {
   const user = await queries.findUserByEmail(email)
   // Check a password even for an unknown email, so both failures take the same time.
   const passwordOk = await verifyPassword(password, user?.passwordHash ?? (await dummyHash()))
@@ -35,6 +36,7 @@ export async function signIn(email: string, password: string) {
   if (user.tenantId && (await queries.findTenantStatus(user.tenantId)) === 'suspended') {
     throw contractorSuspended()
   }
+  checkPortal(user.role, portal)
   return startSession(user)
 }
 
@@ -95,6 +97,32 @@ export async function signInWithCode(phone: string, typedCode: string) {
 
 function wrongCode() {
   return new HttpError(401, 'unauthorized', 'That code is wrong or has expired. Ask for a new one.')
+}
+
+// Each portal admits its own roles. Runs after the password check, so a wrong portal never
+// reveals whether an email has an account.
+function checkPortal(role: UserRole, portal: Portal) {
+  if (role === 'superadmin') {
+    if (portal !== 'admin') {
+      throw new HttpError(
+        403,
+        'use_admin_portal',
+        'This is a Relay admin account. Use the admin portal.',
+      )
+    }
+  } else if (role === 'technician') {
+    throw new HttpError(
+      403,
+      'use_technician_portal',
+      'This is a technician account. Sign in with a text code.',
+    )
+  } else if (portal !== 'contractor') {
+    throw new HttpError(
+      403,
+      'use_contractor_portal',
+      'This is a contractor account. Use the contractor portal.',
+    )
+  }
 }
 
 function contractorSuspended() {

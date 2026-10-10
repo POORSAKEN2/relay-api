@@ -1,9 +1,14 @@
 import { z } from 'zod'
 import { Phone } from '../../lib/fields.ts'
 
+// The email portals: contractor staff and the Relay admin. Technicians sign in by text code.
+export const Portal = z.enum(['contractor', 'admin'])
+export type Portal = z.infer<typeof Portal>
+
 export const SignInInput = z.object({
   email: z.email().toLowerCase(),
   password: z.string().min(1).max(200),
+  portal: Portal,
 })
 
 // Technicians type their mobile number in any US format.

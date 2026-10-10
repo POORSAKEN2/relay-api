@@ -14,7 +14,7 @@ it('counts email and phone sign-in attempts together and blocks an IP after 10 i
   for (let i = 0; i < 4; i++) {
     await request(app)
       .post('/api/auth/sign-in')
-      .send({ email: 'nobody@test.local', password: 'wrong' })
+      .send({ email: 'nobody@test.local', password: 'wrong', portal: 'contractor' })
       .expect(401)
   }
   for (let i = 0; i < 3; i++) {

@@ -19,7 +19,7 @@ describe('POST /api/auth/sign-in', () => {
 
     const res = await request(app)
       .post('/api/auth/sign-in')
-      .send({ email: owner.email.toUpperCase(), password: PASSWORD })
+      .send({ email: owner.email.toUpperCase(), password: PASSWORD, portal: 'contractor' })
       .expect(200)
 
     expect(res.body.user).toMatchObject({ id: owner.id, role: 'owner', tenantId: tenant.id })
@@ -35,11 +35,11 @@ describe('POST /api/auth/sign-in', () => {
 
     const wrongPassword = await request(app)
       .post('/api/auth/sign-in')
-      .send({ email: owner.email, password: 'not it' })
+      .send({ email: owner.email, password: 'not it', portal: 'contractor' })
       .expect(401)
     const unknownEmail = await request(app)
       .post('/api/auth/sign-in')
-      .send({ email: 'nobody@test.local', password: PASSWORD })
+      .send({ email: 'nobody@test.local', password: PASSWORD, portal: 'contractor' })
       .expect(401)
 
     expect(wrongPassword.body).toEqual(unknownEmail.body)
@@ -52,7 +52,7 @@ describe('POST /api/auth/sign-in', () => {
       .send({ email: 'not-an-email' })
       .expect(400)
     expect(res.body.error.code).toBe('validation_failed')
-    expect(Object.keys(res.body.error.details).sort()).toEqual(['email', 'password'])
+    expect(Object.keys(res.body.error.details).sort()).toEqual(['email', 'password', 'portal'])
   })
 })
 
