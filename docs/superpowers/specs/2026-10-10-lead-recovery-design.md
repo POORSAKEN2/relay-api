@@ -93,12 +93,13 @@ begin in between.
 
 ### Open windows in the text
 
-New `nextOpenWindows(tenantId, count = 3)` in `online-booking.service.ts`: the first `count` rows
+New `online-booking/recovery.ts` holds what both texts share: `listDueTenants(now)` (the due
+contractors, each with its `since` and `before`) and `nextOpenWindows(tenantId)`: the first 3 rows
 of `queries.listOpenWindows(tenantId, DAYS_AHEAD)`, each as `'Tue, Oct 13 8 AM - 12 PM'`
 (`formatDay(row.date)`, a space, then `formatTime(row.startsAt) - formatTime(row.endsAt)` with a
 plain hyphen). The rows hold local wall-clock times (`'08:00:00'`), so `formatTime` fits.
 `formatWindow`'s en dash would switch the text to Unicode. The list is read once per contractor
-per run, not once per lead.
+per run, and only when it has a lead to text.
 
 New `online-booking/recovery-texts.ts`, plain ASCII like `waitlist-texts.ts`:
 
@@ -108,8 +109,8 @@ export function abandonedBookingText(t: { tenantName: string; windows: string[];
 //  12 PM - 4 PM; Wed, Oct 14 8 AM - 12 PM. Finish here: <link> Reply STOP to opt out."
 
 export function missedCallerReminderText(t: { tenantName: string; windows: string[]; link: string })
-// "Acme HVAC: we missed your call yesterday. Open times: <...>. Book here: <link> Reply STOP to
-//  opt out."
+// "Acme HVAC: still need a visit? Sorry we missed your call. Open times: <...>. Book here: <link>
+//  Reply STOP to opt out."
 ```
 
 With no open windows, the `Open times: ….` sentence is left out. With one or two, only those are
@@ -209,7 +210,9 @@ TDD, against the test database, as in the existing `*.test.ts` files.
   from one phone.
 - The safety-stop route: sets the column; 404 for an unknown or booked draft; a later answers
   save with a problem clears it.
-- Web: `SafetyStop` calls `stopDraftForSafety` with the draft token once.
+- Web: relay-web has no component-test setup (Vitest runs in `node`), so `SafetyStop` is checked
+  by typecheck, lint and by hand in the browser: answering "Yes" sends one
+  `POST …/safety-stop`.
 
 ## Delivery
 
