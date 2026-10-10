@@ -144,11 +144,31 @@ export async function saveDraftContact(tenant: Tenant, input: DraftInput, ip: st
   })
 }
 
-// After each later step: replaces the draft's answers.
+// After each later step: replaces the draft's answers. Answers with a problem mean the
+// homeowner got past the safety question, so an earlier safety stop was a mistake.
 export async function saveDraftAnswers(tenantId: string, token: string, answers: DraftAnswers) {
   const draft = await queries.findOpenDraft(tenantId, token)
   if (!draft) throw new HttpError(404, 'not_found', DRAFT_GONE)
-  await queries.updateDraft(tenantId, draft.id, { answers })
+  await queries.updateDraft(
+    tenantId,
+    draft.id,
+    answers.problem ? { answers, safetyStoppedAt: null } : { answers },
+  )
+}
+
+// Step 4's safety screen: someone who smells gas or has a carbon monoxide alarm is told not to
+// book online, so their draft must never get a "finish your booking" text.
+export async function stopDraftForSafety(tenantId: string, token: string) {
+  await db.transaction(async (tx) => {
+    const draft = await queries.findOpenDraft(tenantId, token, tx)
+    if (!draft) throw new HttpError(404, 'not_found', DRAFT_GONE)
+    await queries.setDraftSafetyStop(tenantId, draft.id, tx)
+    await audit.insertHomeownerAction(
+      tenantId,
+      { action: 'booking_draft.safety_stopped', entityType: 'booking_draft', entityId: draft.id },
+      tx,
+    )
+  })
 }
 
 // What the wizard needs to pick a draft up again.

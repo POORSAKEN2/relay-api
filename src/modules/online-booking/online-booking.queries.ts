@@ -127,13 +127,24 @@ export async function updateDraft(
   tenantId: string,
   draftId: string,
   values: Partial<
-    Pick<typeof bookingDrafts.$inferInsert, 'name' | 'phone' | 'zip' | 'smsConsent' | 'answers'>
+    Pick<
+      typeof bookingDrafts.$inferInsert,
+      'name' | 'phone' | 'zip' | 'smsConsent' | 'answers' | 'safetyStoppedAt'
+    >
   >,
   tx: Db = db,
 ) {
   await tx
     .update(bookingDrafts)
     .set({ ...values, lastActivityAt: new Date() })
+    .where(and(eq(bookingDrafts.tenantId, tenantId), eq(bookingDrafts.id, draftId)))
+}
+
+// The safety screen showed. Not something the homeowner changed, so the recovery wait goes on.
+export async function setDraftSafetyStop(tenantId: string, draftId: string, tx: Db) {
+  await tx
+    .update(bookingDrafts)
+    .set({ safetyStoppedAt: new Date() })
     .where(and(eq(bookingDrafts.tenantId, tenantId), eq(bookingDrafts.id, draftId)))
 }
 

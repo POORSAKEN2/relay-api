@@ -213,6 +213,58 @@ describe('GET and PATCH /api/online-booking/drafts/:token', () => {
   })
 })
 
+describe('POST /api/online-booking/drafts/:token/safety-stop', () => {
+  it('marks the draft so it is never texted, and logs it', async () => {
+    await createServingShop()
+    const { body } = await call('post', 'drafts').send(draftBody()).expect(201)
+    const [before] = await db.select().from(bookingDrafts)
+
+    await call('post', `drafts/${body.token}/safety-stop`).expect(200, { ok: true })
+
+    const [draft] = await db.select().from(bookingDrafts)
+    expect(draft.safetyStoppedAt).toBeInstanceOf(Date)
+    // Not homeowner activity: the recovery wait isn't restarted.
+    expect(draft.lastActivityAt).toEqual(before.lastActivityAt)
+    const logged = await db
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.action, 'booking_draft.safety_stopped'))
+    expect(logged).toHaveLength(1)
+    expect(logged[0]).toMatchObject({ actorType: 'homeowner', entityId: draft.id })
+  })
+
+  it('is cleared once the homeowner says they are safe and describes the problem', async () => {
+    await createServingShop()
+    const { body } = await call('post', 'drafts').send(draftBody()).expect(201)
+    await call('post', `drafts/${body.token}/safety-stop`).expect(200)
+
+    // Saving other answers leaves it: only finishing step 4 shows it was a mistake.
+    await call('patch', `drafts/${body.token}`)
+      .send({ answers: { bookedVia: 'google' } })
+      .expect(200)
+    expect((await db.select().from(bookingDrafts))[0].safetyStoppedAt).toBeInstanceOf(Date)
+
+    await call('patch', `drafts/${body.token}`)
+      .send({ answers: { problem: 'No cooling', systemType: 'central_ac' } })
+      .expect(200)
+    expect((await db.select().from(bookingDrafts))[0].safetyStoppedAt).toBeNull()
+  })
+
+  it('hides an unknown, booked or other contractor’s draft', async () => {
+    const shop = await createServingShop()
+    await createServingShop('other')
+    const { body } = await call('post', 'drafts').send(draftBody()).expect(201)
+
+    await call('post', 'drafts/nope/safety-stop').expect(404)
+    await call('post', `drafts/${body.token}/safety-stop`, 'other').expect(404)
+
+    await call('post', 'bookings')
+      .send(bookingBody(shop, { draftToken: body.token }))
+      .expect(201)
+    await call('post', `drafts/${body.token}/safety-stop`).expect(404)
+  })
+})
+
 describe('POST /api/online-booking/bookings with a draft', () => {
   it('marks the draft as booked, so it can’t be resumed', async () => {
     const shop = await createServingShop()
