@@ -2,6 +2,7 @@ import * as Sentry from '@sentry/node'
 import { logger } from '../lib/logger.ts'
 import * as accounts from '../modules/accounts/accounts.service.ts'
 import * as billing from '../modules/billing/billing.service.ts'
+import * as calls from '../modules/calls/calls.service.ts'
 import * as homeownerMessages from '../modules/homeowner-messages/homeowner-messages.service.ts'
 import * as onlineBooking from '../modules/online-booking/online-booking.service.ts'
 import * as waitlist from '../modules/online-booking/waitlist.service.ts'
@@ -22,10 +23,12 @@ export async function startJobs() {
     if (expired > 0) logger.info({ expired }, 'Booking holds expired')
   })
 
-  // Every 5 minutes: homeowners who stopped partway through booking get one text to finish.
+  // Every 5 minutes: once a contractor's morning begins, homeowners who stopped partway through
+  // booking and missed callers who didn't book get one text each.
   await register('booking-recovery', { cron: '*/5 * * * *' }, async () => {
     const texted = await onlineBooking.sendRecoveryTexts()
-    if (texted > 0) logger.info({ texted }, 'Booking recovery texts saved')
+    const reminded = await calls.sendMissedCallerReminders()
+    if (texted > 0 || reminded > 0) logger.info({ texted, reminded }, 'Lead recovery texts saved')
   })
 
   // Every minute: a place that opened goes to the next homeowner on the waitlist.
