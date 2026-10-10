@@ -66,6 +66,14 @@ export function quietUntil(now: Date, timezone: string, start: string, end: stri
   return new Date(now.getTime() + wait * 1000)
 }
 
+// The last moment quiet hours ended, at or before `now`: the contractor's morning. The
+// lead-recovery texts go out once it has begun. Off by up to an hour on daylight-saving days,
+// like quietUntil.
+export function lastMorning(now: Date, timezone: string, end: string): Date {
+  const since = (secondsOfDay(now, timezone) - secondsOfDay(end) + DAY_SECONDS) % DAY_SECONDS
+  return new Date(now.getTime() - since * 1000)
+}
+
 // Seconds since local midnight, of a moment in a timezone or of a '21:00:00' time.
 function secondsOfDay(moment: Date | string, timezone?: string): number {
   const clock =
