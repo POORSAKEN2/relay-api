@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { HOMEOWNER_KINDS, quietUntil, TEXT_RULES } from './rules.ts'
+import { HOMEOWNER_KINDS, lastMorning, quietUntil, TEXT_RULES } from './rules.ts'
 
 // Manila is UTC+8 with no daylight saving. Quiet hours 21:00 to 08:00.
 const manila = (time: string) => new Date(`2030-01-08T${time}+08:00`)
@@ -22,6 +22,26 @@ it('handles a window that doesn’t cross midnight', () => {
   expect(lunch('12:20:00')).toEqual(manila('13:00:00'))
   expect(lunch('13:00:00')).toBeNull()
   expect(lunch('23:00:00')).toBeNull()
+})
+
+it('finds the morning: the last time quiet hours ended', () => {
+  const morning = (time: string) => lastMorning(manila(time), 'Asia/Manila', '08:00:00')
+  expect(morning('10:30:00')).toEqual(manila('08:00:00'))
+  expect(morning('08:00:00')).toEqual(manila('08:00:00'))
+  expect(morning('23:59:00')).toEqual(manila('08:00:00'))
+  // Before 8 AM the last morning was yesterday's.
+  expect(morning('07:00:00')).toEqual(new Date('2030-01-07T08:00:00+08:00'))
+})
+
+it('finds the morning in a time zone behind UTC, and at another hour', () => {
+  // Phoenix is UTC-7 with no daylight saving: 09:15 local is 16:15 UTC.
+  const now = new Date('2030-01-08T16:15:00Z')
+  expect(lastMorning(now, 'America/Phoenix', '07:30:00')).toEqual(
+    new Date('2030-01-08T07:30:00-07:00'),
+  )
+  expect(lastMorning(now, 'America/Phoenix', '10:00:00')).toEqual(
+    new Date('2030-01-07T10:00:00-07:00'),
+  )
 })
 
 it('never checks consent or quiet hours for staff texts', () => {

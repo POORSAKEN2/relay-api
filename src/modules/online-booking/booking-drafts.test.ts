@@ -1,7 +1,15 @@
 import { eq } from 'drizzle-orm'
 import request from 'supertest'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createJob, createShop, resetDb, type Shop, TUESDAY } from '../../../test/helpers.ts'
+import {
+  createJob,
+  createShop,
+  resetDb,
+  type Shop,
+  setMorning,
+  setQuietNow,
+  TUESDAY,
+} from '../../../test/helpers.ts'
 import { createApp } from '../../app.ts'
 import { db } from '../../db/client.ts'
 import {
@@ -213,6 +221,58 @@ describe('GET and PATCH /api/online-booking/drafts/:token', () => {
   })
 })
 
+describe('POST /api/online-booking/drafts/:token/safety-stop', () => {
+  it('marks the draft so it is never texted, and logs it', async () => {
+    await createServingShop()
+    const { body } = await call('post', 'drafts').send(draftBody()).expect(201)
+    const [before] = await db.select().from(bookingDrafts)
+
+    await call('post', `drafts/${body.token}/safety-stop`).expect(200, { ok: true })
+
+    const [draft] = await db.select().from(bookingDrafts)
+    expect(draft.safetyStoppedAt).toBeInstanceOf(Date)
+    // Not homeowner activity: the recovery wait isn't restarted.
+    expect(draft.lastActivityAt).toEqual(before.lastActivityAt)
+    const logged = await db
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.action, 'booking_draft.safety_stopped'))
+    expect(logged).toHaveLength(1)
+    expect(logged[0]).toMatchObject({ actorType: 'homeowner', entityId: draft.id })
+  })
+
+  it('is cleared once the homeowner says they are safe and describes the problem', async () => {
+    await createServingShop()
+    const { body } = await call('post', 'drafts').send(draftBody()).expect(201)
+    await call('post', `drafts/${body.token}/safety-stop`).expect(200)
+
+    // Saving other answers leaves it: only finishing step 4 shows it was a mistake.
+    await call('patch', `drafts/${body.token}`)
+      .send({ answers: { bookedVia: 'google' } })
+      .expect(200)
+    expect((await db.select().from(bookingDrafts))[0].safetyStoppedAt).toBeInstanceOf(Date)
+
+    await call('patch', `drafts/${body.token}`)
+      .send({ answers: { problem: 'No cooling', systemType: 'central_ac' } })
+      .expect(200)
+    expect((await db.select().from(bookingDrafts))[0].safetyStoppedAt).toBeNull()
+  })
+
+  it('hides an unknown, booked or other contractor’s draft', async () => {
+    const shop = await createServingShop()
+    await createServingShop('other')
+    const { body } = await call('post', 'drafts').send(draftBody()).expect(201)
+
+    await call('post', 'drafts/nope/safety-stop').expect(404)
+    await call('post', `drafts/${body.token}/safety-stop`, 'other').expect(404)
+
+    await call('post', 'bookings')
+      .send(bookingBody(shop, { draftToken: body.token }))
+      .expect(201)
+    await call('post', `drafts/${body.token}/safety-stop`).expect(404)
+  })
+})
+
 describe('POST /api/online-booking/bookings with a draft', () => {
   it('marks the draft as booked, so it can’t be resumed', async () => {
     const shop = await createServingShop()
@@ -241,8 +301,8 @@ describe('POST /api/online-booking/bookings with a draft', () => {
 
 const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000)
 
-// A draft straight in the database: consent given, quiet for 90 minutes, begun 2 hours ago.
-// That is one the recovery job should text.
+// A draft straight in the database: consent given, quiet for 5 hours, begun 6 hours ago. With
+// the morning 3 hours ago (setMorning), that is one the recovery job should text.
 async function insertDraft(
   shop: Shop,
   token: string,
@@ -255,8 +315,8 @@ async function insertDraft(
     phone: '+14805550199',
     zip: '85201',
     smsConsent: true,
-    lastActivityAt: minutesAgo(90),
-    createdAt: minutesAgo(120),
+    lastActivityAt: minutesAgo(5 * 60),
+    createdAt: minutesAgo(6 * 60),
     ...overrides,
   })
   // Ticking the box on the contact step also records the consent, as saveDraftContact does.
@@ -272,8 +332,9 @@ async function insertDraft(
 }
 
 describe('sendRecoveryTexts', () => {
-  it('saves one text with a link back, and never a second one', async () => {
+  it('saves one text with the open times and a link back, and never a second one', async () => {
     const shop = await createServingShop()
+    await setMorning(shop.tenant.id, 180)
     await insertDraft(shop, 'token-1')
 
     expect(await sendRecoveryTexts()).toBe(1)
@@ -288,8 +349,11 @@ describe('sendRecoveryTexts', () => {
       status: 'queued',
       contact: '+14805550199',
     })
-    expect(saved[0].body).toContain('desert HVAC')
+    expect(saved[0].body).toMatch(/^desert HVAC: you started booking a visit\. Open times: /)
+    // The shop has 8-12 and 12-4 windows on Tuesdays and Wednesdays: three of them are listed.
+    expect(saved[0].body.match(/\d{1,2} (AM|PM) - \d{1,2} (AM|PM)/g)).toHaveLength(3)
     expect(saved[0].body).toContain('https://desert.localhost/?resume=token-1')
+    expect(saved[0].body).toMatch(/^[\x20-\x7e]*$/)
     const [draft] = await db.select().from(bookingDrafts)
     expect(draft.recoveryTextedAt).toBeInstanceOf(Date)
 
@@ -300,6 +364,8 @@ describe('sendRecoveryTexts', () => {
   it('does not text the homeowners of a suspended contractor', async () => {
     const live = await createServingShop('desert')
     const off = await createServingShop('gone')
+    await setMorning(live.tenant.id, 180)
+    await setMorning(off.tenant.id, 180)
     await insertDraft(live, 'live-token')
     await insertDraft(off, 'off-token')
     await db.update(tenants).set({ status: 'suspended' }).where(eq(tenants.id, off.tenant.id))
@@ -313,13 +379,41 @@ describe('sendRecoveryTexts', () => {
 
   it('leaves alone every draft that must not be texted', async () => {
     const shop = await createServingShop()
+    await setMorning(shop.tenant.id, 180)
     const job = await createJob(shop) // made just now, for the customer with phone +16025550111
 
     await insertDraft(shop, 'no-consent', { smsConsent: false })
-    await insertDraft(shop, 'still-active', { lastActivityAt: minutesAgo(10) })
-    await insertDraft(shop, 'too-old', { createdAt: minutesAgo(25 * 60) })
     await insertDraft(shop, 'booked', { bookedJobId: job.id })
     await insertDraft(shop, 'booked-by-phone', { phone: '+16025550111' })
+    await insertDraft(shop, 'safety-stopped', { safetyStoppedAt: minutesAgo(5 * 60) })
+    // Active after the morning: its morning is tomorrow.
+    await insertDraft(shop, 'active-after-morning', { lastActivityAt: minutesAgo(120) })
+    // Older than the previous morning: its one chance was yesterday.
+    await insertDraft(shop, 'older-than-previous-morning', {
+      lastActivityAt: minutesAgo(28 * 60),
+      createdAt: minutesAgo(29 * 60),
+    })
+
+    expect(await sendRecoveryTexts()).toBe(0)
+    expect(await db.select().from(messages)).toHaveLength(0)
+  })
+
+  it('waits an hour after the homeowner stopped, even past the morning', async () => {
+    const shop = await createServingShop()
+    await setMorning(shop.tenant.id, 30)
+    // Stopped 40 minutes ago, before this morning began.
+    await insertDraft(shop, 'just-stopped', { lastActivityAt: minutesAgo(40) })
+
+    expect(await sendRecoveryTexts()).toBe(0)
+
+    await db.update(bookingDrafts).set({ lastActivityAt: minutesAgo(61) })
+    expect(await sendRecoveryTexts()).toBe(1)
+  })
+
+  it('texts nobody while the contractor is in quiet hours', async () => {
+    const shop = await createServingShop()
+    await setQuietNow(shop.tenant.id)
+    await insertDraft(shop, 'token-1', { lastActivityAt: minutesAgo(20 * 60) })
 
     expect(await sendRecoveryTexts()).toBe(0)
     expect(await db.select().from(messages)).toHaveLength(0)

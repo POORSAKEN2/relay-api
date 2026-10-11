@@ -950,6 +950,9 @@ export const bookingDrafts = pgTable(
     smsConsent: boolean('sms_consent').notNull().default(false), // proof is in consent_events
     lastActivityAt: timestamptz('last_activity_at').notNull().defaultNow(),
     recoveryTextedAt: timestamptz('recovery_texted_at'), // null = not texted yet
+    // Reached the gas / carbon monoxide safety screen: never texted to finish booking.
+    // Cleared once the homeowner finishes step 4 after all ("I tapped Yes by mistake").
+    safetyStoppedAt: timestamptz('safety_stopped_at'),
     bookedJobId: uuid('booked_job_id'), // set when the booking is made
     createdAt: createdAt(),
   },

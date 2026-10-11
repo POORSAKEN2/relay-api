@@ -1,0 +1,1 @@
+ALTER TABLE "booking_drafts" ADD COLUMN "safety_stopped_at" timestamp with time zone;

@@ -127,6 +127,13 @@
       "when": 1791381261445,
       "tag": "0017_jobs_booked_via",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1791637095677,
+      "tag": "0018_draft_safety_stop",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm'
+import { and, asc, eq, gte, inArray, isNull, lt, ne, sql } from 'drizzle-orm'
 import { type Db, db } from '../../db/client.ts'
 import {
   bookingDrafts,
@@ -12,7 +12,7 @@ import {
 } from '../../db/schema.ts'
 
 // Tenant-scoped: every query takes tenantId first, except the system jobs' queries
-// (expireHolds, listDraftsToRecover, deleteIdleDraftPhotos) and findDraftPhoto, which work
+// (expireHolds, listRecoveryTenants, deleteIdleDraftPhotos) and findDraftPhoto, which work
 // across contractors.
 
 // Active services in the order the contractor set, with what the booking page shows.
@@ -127,13 +127,24 @@ export async function updateDraft(
   tenantId: string,
   draftId: string,
   values: Partial<
-    Pick<typeof bookingDrafts.$inferInsert, 'name' | 'phone' | 'zip' | 'smsConsent' | 'answers'>
+    Pick<
+      typeof bookingDrafts.$inferInsert,
+      'name' | 'phone' | 'zip' | 'smsConsent' | 'answers' | 'safetyStoppedAt'
+    >
   >,
   tx: Db = db,
 ) {
   await tx
     .update(bookingDrafts)
     .set({ ...values, lastActivityAt: new Date() })
+    .where(and(eq(bookingDrafts.tenantId, tenantId), eq(bookingDrafts.id, draftId)))
+}
+
+// The safety screen showed. Not something the homeowner changed, so the recovery wait goes on.
+export async function setDraftSafetyStop(tenantId: string, draftId: string, tx: Db) {
+  await tx
+    .update(bookingDrafts)
+    .set({ safetyStoppedAt: new Date() })
     .where(and(eq(bookingDrafts.tenantId, tenantId), eq(bookingDrafts.id, draftId)))
 }
 
@@ -200,32 +211,40 @@ export async function findDraftPhoto(token: string, photoId: string) {
   return photo
 }
 
-// Every turned-on contractor's drafts that are due their one recovery text: consent given,
-// nothing from the homeowner since `quietSince`, begun after `startedAfter`, not booked, not
-// texted yet, and no job made for that phone since the draft began (they may have called the
-// office instead).
-export function listDraftsToRecover(quietSince: Date, startedAfter: Date) {
+// Every turned-on contractor, with what the lead-recovery job needs to know when its morning
+// is and to build links.
+export function listRecoveryTenants() {
   return db
     .select({
-      id: bookingDrafts.id,
-      tenantId: bookingDrafts.tenantId,
-      token: bookingDrafts.token,
-      phone: bookingDrafts.phone,
-      tenantName: tenants.name,
+      id: tenants.id,
+      name: tenants.name,
       slug: tenants.slug,
       customDomain: tenants.customDomain,
       customDomainVerifiedAt: tenants.customDomainVerifiedAt,
+      timezone: tenants.timezone,
+      quietHoursStart: tenants.quietHoursStart,
+      quietHoursEnd: tenants.quietHoursEnd,
     })
+    .from(tenants)
+    .where(ne(tenants.status, 'suspended'))
+}
+
+// The contractor's drafts due their one recovery text: consent given, last touched in the
+// range, not booked, not texted yet, not stopped for safety, and no job made for that phone
+// since the draft began (they may have called the office instead).
+export function listDraftsToRecover(tenantId: string, range: { since: Date; before: Date }) {
+  return db
+    .select({ id: bookingDrafts.id, token: bookingDrafts.token, phone: bookingDrafts.phone })
     .from(bookingDrafts)
-    .innerJoin(tenants, eq(tenants.id, bookingDrafts.tenantId))
     .where(
       and(
-        ne(tenants.status, 'suspended'),
+        eq(bookingDrafts.tenantId, tenantId),
         eq(bookingDrafts.smsConsent, true),
         isNull(bookingDrafts.bookedJobId),
         isNull(bookingDrafts.recoveryTextedAt),
-        lt(bookingDrafts.lastActivityAt, quietSince),
-        gt(bookingDrafts.createdAt, startedAfter),
+        isNull(bookingDrafts.safetyStoppedAt),
+        gte(bookingDrafts.lastActivityAt, range.since),
+        lt(bookingDrafts.lastActivityAt, range.before),
         sql`not exists (
           select 1 from ${jobs}
           join ${customers} on ${customers.id} = ${jobs.customerId}

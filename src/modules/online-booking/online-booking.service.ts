@@ -27,6 +27,8 @@ import type {
   DraftInput,
   WaitlistInput,
 } from './online-booking.schemas.ts'
+import * as recovery from './recovery.ts'
+import { abandonedBookingText } from './recovery-texts.ts'
 import * as waitlist from './waitlist.queries.ts'
 import * as waitlistOffers from './waitlist.service.ts'
 
@@ -35,11 +37,6 @@ import * as waitlistOffers from './waitlist.service.ts'
 // From step 3 on, the answers are kept in a draft, so an unfinished booking can be resumed.
 
 const DAYS_AHEAD = 14
-
-// Recovery text: sent once a draft has been quiet this long, and never for one begun longer
-// ago than the cutoff. Still to decide: whether contractors set these themselves.
-const RECOVERY_WAIT_MINUTES = 60
-const RECOVERY_CUTOFF_HOURS = 24
 
 // Photos on a draft nobody booked are kept this long after its last activity.
 const PHOTO_KEEP_DAYS = 30
@@ -144,11 +141,31 @@ export async function saveDraftContact(tenant: Tenant, input: DraftInput, ip: st
   })
 }
 
-// After each later step: replaces the draft's answers.
+// After each later step: replaces the draft's answers. Answers with a problem mean the
+// homeowner got past the safety question, so an earlier safety stop was a mistake.
 export async function saveDraftAnswers(tenantId: string, token: string, answers: DraftAnswers) {
   const draft = await queries.findOpenDraft(tenantId, token)
   if (!draft) throw new HttpError(404, 'not_found', DRAFT_GONE)
-  await queries.updateDraft(tenantId, draft.id, { answers })
+  await queries.updateDraft(
+    tenantId,
+    draft.id,
+    answers.problem ? { answers, safetyStoppedAt: null } : { answers },
+  )
+}
+
+// Step 4's safety screen: someone who smells gas or has a carbon monoxide alarm is told not to
+// book online, so their draft must never get a "finish your booking" text.
+export async function stopDraftForSafety(tenantId: string, token: string) {
+  await db.transaction(async (tx) => {
+    const draft = await queries.findOpenDraft(tenantId, token, tx)
+    if (!draft) throw new HttpError(404, 'not_found', DRAFT_GONE)
+    await queries.setDraftSafetyStop(tenantId, draft.id, tx)
+    await audit.insertHomeownerAction(
+      tenantId,
+      { action: 'booking_draft.safety_stopped', entityType: 'booking_draft', entityId: draft.id },
+      tx,
+    )
+  })
 }
 
 // What the wizard needs to pick a draft up again.
@@ -401,29 +418,36 @@ export function deleteIdlePhotos() {
 }
 
 // Run every 5 minutes by the 'booking-recovery' job: homeowners who agreed to texts and stopped
-// partway get one text with a link back to their draft. Returns how many were texted.
-export async function sendRecoveryTexts() {
-  const now = Date.now()
-  const drafts = await queries.listDraftsToRecover(
-    new Date(now - RECOVERY_WAIT_MINUTES * 60_000),
-    new Date(now - RECOVERY_CUTOFF_HOURS * 3_600_000),
-  )
-  for (const draft of drafts) {
-    // Together, so a draft is never marked without its text, and never texted twice.
-    await db.transaction(async (tx) => {
-      await sendText(
-        draft.tenantId,
-        {
-          contact: draft.phone,
-          kind: 'abandoned_booking',
-          body: `${draft.tenantName}: you started booking a visit. Finish here: ${bookingLink(draft, draft.token)} Reply STOP to opt out.`,
-        },
-        tx,
-      )
-      await queries.markDraftTexted(draft.tenantId, draft.id, tx)
-    })
+// partway get one text the next morning, with the open times and a link back to their draft.
+// Returns how many were texted.
+export async function sendRecoveryTexts(now = new Date()) {
+  let texted = 0
+  for (const tenant of await recovery.listDueTenants(now)) {
+    const drafts = await queries.listDraftsToRecover(tenant.id, tenant)
+    if (drafts.length === 0) continue
+    const windows = await recovery.nextOpenWindows(tenant.id)
+    for (const draft of drafts) {
+      // Together, so a draft is never marked without its text, and never texted twice.
+      await db.transaction(async (tx) => {
+        await sendText(
+          tenant.id,
+          {
+            contact: draft.phone,
+            kind: 'abandoned_booking',
+            body: abandonedBookingText({
+              tenantName: tenant.name,
+              windows,
+              link: bookingLink(tenant, draft.token),
+            }),
+          },
+          tx,
+        )
+        await queries.markDraftTexted(tenant.id, draft.id, tx)
+      })
+    }
+    texted += drafts.length
   }
-  return drafts.length
+  return texted
 }
 
 // The address of a contractor's booking page that opens a draft.

@@ -194,3 +194,27 @@ function passwordHash(): Promise<string> {
   hashed ??= hashPassword(PASSWORD)
   return hashed
 }
+
+// Phoenix wall-clock time `offsetMinutes` from now, as '13:05:42'. Phoenix has no daylight
+// saving, so local time is always UTC-7.
+function phoenixClock(offsetMinutes: number) {
+  return new Date(Date.now() - 7 * 3_600_000 + offsetMinutes * 60_000).toISOString().slice(11, 19)
+}
+
+// Sets quiet hours so the contractor's morning (when they end) was `minutesAgo` minutes ago
+// and they start again in an hour: the lead-recovery job runs for it right now, whatever the
+// time of day the tests run.
+export async function setMorning(tenantId: string, minutesAgo: number) {
+  await db
+    .update(tenants)
+    .set({ quietHoursEnd: phoenixClock(-minutesAgo), quietHoursStart: phoenixClock(60) })
+    .where(eq(tenants.id, tenantId))
+}
+
+// Sets quiet hours to the hour around now: no unprompted text may go out.
+export async function setQuietNow(tenantId: string) {
+  await db
+    .update(tenants)
+    .set({ quietHoursStart: phoenixClock(-60), quietHoursEnd: phoenixClock(60) })
+    .where(eq(tenants.id, tenantId))
+}
