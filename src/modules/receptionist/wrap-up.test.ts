@@ -165,7 +165,6 @@ describe('wrapUpCall', () => {
 
 describe('plainSummary', () => {
   const nothing = {
-    safetyFlag: false,
     transferredAt: null,
     messageTaken: false,
     jobDate: null,
@@ -174,9 +173,6 @@ describe('plainSummary', () => {
   }
 
   it('says the most important thing that happened', () => {
-    expect(plainSummary({ ...nothing, safetyFlag: true, transferredAt: new Date() })).toBe(
-      'AI call. Safety script (gas or CO).',
-    )
     expect(plainSummary({ ...nothing, transferredAt: new Date() })).toBe(
       'AI call. Transferred to staff.',
     )

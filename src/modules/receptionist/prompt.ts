@@ -60,7 +60,6 @@ Rules:
 - Never diagnose the problem, never promise an exact arrival time, never take card numbers.
 - Outside the service area, or for anything you can't do (rescheduling, a quote, a complaint): use take_message.
 - If the caller asks for a person: use transfer_to_human.
-- Gas, burning or rotten-egg smells, or a carbon monoxide alarm: use report_safety_issue at once.
 - After a booking, tell them the day and window, then ask if there is anything else.`
 }
 

@@ -7,7 +7,7 @@ import { chat, LlmUnavailable } from '../llm/llm.ts'
 import * as queries from './receptionist.queries.ts'
 
 const SUMMARY_PROMPT =
-  'Summarize this phone call for an HVAC office in at most three short sentences: what the caller needed, what was done (booked, message taken, transferred, safety script), and anything the office or technician must follow up on. Plain text, no greeting.'
+  'Summarize this phone call for an HVAC office in at most three short sentences: what the caller needed, what was done (booked, message taken, transferred), and anything the office or technician must follow up on. Plain text, no greeting.'
 
 // After an AI call ends ('call-wrapup' job): a short summary for the office, on the call and
 // on the job it booked, where the office and the technician already read notes. A job, so the
@@ -57,14 +57,12 @@ async function summarize(transcript: string | null): Promise<string | null> {
 
 // A summary from the facts alone, the most important first.
 export function plainSummary(call: {
-  safetyFlag: boolean
   transferredAt: Date | null
   messageTaken: boolean
   jobDate: string | null
   jobStartsAt: string | null
   jobEndsAt: string | null
 }): string {
-  if (call.safetyFlag) return 'AI call. Safety script (gas or CO).'
   if (call.jobDate && call.jobStartsAt && call.jobEndsAt) {
     return `AI call. Booked ${formatDay(call.jobDate)}, ${formatWindow(call.jobStartsAt, call.jobEndsAt)}.`
   }

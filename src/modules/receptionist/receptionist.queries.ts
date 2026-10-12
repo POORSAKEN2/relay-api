@@ -34,7 +34,7 @@ export async function updateCall(
   change: Partial<
     Pick<
       typeof calls.$inferInsert,
-      'priority' | 'safetyFlag' | 'transferredAt' | 'endedAt' | 'transcript' | 'summary'
+      'priority' | 'transferredAt' | 'endedAt' | 'transcript' | 'summary'
     >
   >,
 ) {
@@ -68,7 +68,6 @@ export async function findCallToWrapUp(tenantId: string, callId: string) {
     .select({
       transcript: calls.transcript,
       summary: calls.summary,
-      safetyFlag: calls.safetyFlag,
       transferredAt: calls.transferredAt,
       messageTaken: sql<boolean>`exists (
         select 1 from callback_requests

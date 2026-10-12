@@ -17,7 +17,6 @@ import { HttpError } from '../../lib/http-error.ts'
 import { type ChatReply, chat, LlmUnavailable, type ToolCall } from '../llm/llm.ts'
 import { endCall, handleTurn, startCall } from './engine.ts'
 import { CALL_CONSENT_QUESTION } from './prompt.ts'
-import { SAFETY_SCRIPT, SAFETY_SCRIPT_NO_TRANSFER } from './safety.ts'
 import { getSession } from './session.ts'
 import { runTool } from './tools.ts'
 
@@ -31,7 +30,6 @@ vi.mock('../../jobs/boss.ts', () => ({ queueJob: vi.fn() }))
 
 const MARIA = '+16025550111' // the shop's customer
 const OFFICE = '+16025550100'
-const ON_CALL = '+16025550199'
 
 beforeEach(async () => {
   await resetDb()
@@ -60,7 +58,7 @@ async function servingShop() {
   return shop
 }
 
-function setPhones(shop: Shop, phones: { officePhone?: string; onCallPhone?: string }) {
+function setPhones(shop: Shop, phones: { officePhone: string }) {
   return db.update(tenants).set(phones).where(eq(tenants.id, shop.tenant.id))
 }
 
@@ -162,49 +160,6 @@ describe('handleTurn', () => {
     expect(JSON.stringify(toolTurns.at(-1))).toContain('booked')
   })
 
-  it('answers gas with the safety script and the on-call phone, without asking the model', async () => {
-    const shop = await servingShop()
-    await setPhones(shop, { onCallPhone: ON_CALL })
-    const { callId } = await call(shop)
-
-    const reply = await handleTurn(callId, 'I smell gas in the kitchen')
-
-    expect(reply).toEqual({
-      say: SAFETY_SCRIPT,
-      action: { type: 'transfer', to: ON_CALL },
-      events: [{ type: 'safety' }],
-    })
-    expect(chat).not.toHaveBeenCalled()
-    expect(await callRow(callId)).toMatchObject({
-      safetyFlag: true,
-      transferredAt: expect.any(Date),
-    })
-    // Every later turn gets the script again, still without the model.
-    expect((await handleTurn(callId, 'Can you book me for tomorrow?')).say).toBe(SAFETY_SCRIPT)
-    expect(chat).not.toHaveBeenCalled()
-  })
-
-  it('tells the caller to call 911 and hangs up when nobody is on call', async () => {
-    const shop = await servingShop()
-    const { callId } = await call(shop)
-
-    const reply = await handleTurn(callId, 'Our carbon monoxide alarm is going off')
-
-    expect(reply).toMatchObject({ say: SAFETY_SCRIPT_NO_TRANSFER, action: { type: 'hang_up' } })
-  })
-
-  it('takes the safety path when the model reports it', async () => {
-    const shop = await servingShop()
-    await setPhones(shop, { onCallPhone: ON_CALL })
-    const { callId } = await call(shop)
-    script(uses({ name: 'report_safety_issue', input: { what: 'sulfur smell by the heater' } }))
-
-    const reply = await handleTurn(callId, 'There is a weird sulfur smell by the water heater')
-
-    expect(reply.say).toBe(SAFETY_SCRIPT)
-    expect((await callRow(callId)).safetyFlag).toBe(true)
-  })
-
   it('transfers to the office when the caller asks for a person', async () => {
     const shop = await servingShop()
     await setPhones(shop, { officePhone: OFFICE })
@@ -292,14 +247,6 @@ describe('book_visit', () => {
     expect((await runTool(session, book(booking))).output).toContain('"booked":true')
     expect((await runTool(session, book(booking))).output).toContain('Already booked')
     expect(await db.select().from(jobs)).toHaveLength(1)
-  })
-
-  it('never books a safety call, whatever the model says', async () => {
-    const session = await bookingCall()
-    session.safety = true
-
-    expect((await runTool(session, book(booking))).output).toContain('safety issue')
-    expect(await db.select().from(jobs)).toHaveLength(0)
   })
 
   it('asks for a phone number when caller ID is hidden', async () => {

@@ -19,7 +19,6 @@ export type CallSession = {
   windows: Map<string, { windowId: string; date: string; label: string }>
   zip: string | null
   priority: boolean
-  safety: boolean // gas or CO was mentioned: no booking from now on
   bookedJobId: string | null
   lastActivity: Date
 }

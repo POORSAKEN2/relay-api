@@ -30,12 +30,6 @@
     "expect": "priority"
   },
   {
-    "name": "Gas smell: safety script, no booking",
-    "fromPhone": "+16025550163",
-    "callerLines": ["Hi, I smell gas in the kitchen, can someone come look at the stove?"],
-    "expect": "safety"
-  },
-  {
     "name": "ZIP outside the area: message taken",
     "fromPhone": "+16025550164",
     "callerLines": [

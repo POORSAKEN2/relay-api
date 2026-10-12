@@ -127,24 +127,13 @@ export async function updateDraft(
   tenantId: string,
   draftId: string,
   values: Partial<
-    Pick<
-      typeof bookingDrafts.$inferInsert,
-      'name' | 'phone' | 'zip' | 'smsConsent' | 'answers' | 'safetyStoppedAt'
-    >
+    Pick<typeof bookingDrafts.$inferInsert, 'name' | 'phone' | 'zip' | 'smsConsent' | 'answers'>
   >,
   tx: Db = db,
 ) {
   await tx
     .update(bookingDrafts)
     .set({ ...values, lastActivityAt: new Date() })
-    .where(and(eq(bookingDrafts.tenantId, tenantId), eq(bookingDrafts.id, draftId)))
-}
-
-// The safety screen showed. Not something the homeowner changed, so the recovery wait goes on.
-export async function setDraftSafetyStop(tenantId: string, draftId: string, tx: Db) {
-  await tx
-    .update(bookingDrafts)
-    .set({ safetyStoppedAt: new Date() })
     .where(and(eq(bookingDrafts.tenantId, tenantId), eq(bookingDrafts.id, draftId)))
 }
 
@@ -230,7 +219,7 @@ export function listRecoveryTenants() {
 }
 
 // The contractor's drafts due their one recovery text: consent given, last touched in the
-// range, not booked, not texted yet, not stopped for safety, and no job made for that phone
+// range, not booked, not texted yet, and no job made for that phone
 // since the draft began (they may have called the office instead).
 export function listDraftsToRecover(tenantId: string, range: { since: Date; before: Date }) {
   return db
@@ -242,7 +231,6 @@ export function listDraftsToRecover(tenantId: string, range: { since: Date; befo
         eq(bookingDrafts.smsConsent, true),
         isNull(bookingDrafts.bookedJobId),
         isNull(bookingDrafts.recoveryTextedAt),
-        isNull(bookingDrafts.safetyStoppedAt),
         gte(bookingDrafts.lastActivityAt, range.since),
         lt(bookingDrafts.lastActivityAt, range.before),
         sql`not exists (
