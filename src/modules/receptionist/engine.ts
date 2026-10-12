@@ -5,7 +5,6 @@ import { chat, LlmUnavailable } from '../llm/llm.ts'
 import { insertCallback, listServices } from '../online-booking/online-booking.queries.ts'
 import { buildSystemPrompt, CALL_BACK_LINE, greeting } from './prompt.ts'
 import * as queries from './receptionist.queries.ts'
-import { mentionsGasOrCo } from './safety.ts'
 import {
   type Action,
   type CallSession,
@@ -15,7 +14,7 @@ import {
   listSessions,
   saveSession,
 } from './session.ts'
-import { type Handoff, runTool, startSafety, TOOL_SPECS } from './tools.ts'
+import { type Handoff, runTool, TOOL_SPECS } from './tools.ts'
 import { formatTranscript } from './transcript.ts'
 
 // The AI receptionist: text in, text out. A phone line (or the test console) turns the
@@ -29,9 +28,13 @@ const NO_CALL_BACK_LINE =
   'I’m sorry, I’m having trouble on my end. Please call us back in a few minutes. Goodbye.'
 
 // What happened during a turn, for the test console. The phone line ignores it.
-export type TurnEvent =
-  | { type: 'tool'; name: string; ok: boolean; summary: string; job?: { id: string; date: string } }
-  | { type: 'safety' }
+export type TurnEvent = {
+  type: 'tool'
+  name: string
+  ok: boolean
+  summary: string
+  job?: { id: string; date: string }
+}
 
 export type TurnReply = { say: string; action: Action | null; events: TurnEvent[] }
 
@@ -76,7 +79,6 @@ export async function startCall(
     windows: new Map(),
     zip: null,
     priority: false,
-    safety: false,
     bookedJobId: null,
     lastActivity: new Date(),
   })
@@ -88,12 +90,6 @@ export async function handleTurn(callId: string, callerText: string): Promise<Tu
   const session = getSession(callId)
   addTurn(session, 'caller', callerText)
   const events: TurnEvent[] = []
-
-  // Checked before the model sees the words, so no reply can talk past a gas leak.
-  if (session.safety || mentionsGasOrCo(callerText)) {
-    const { handoff } = await startSafety(session)
-    return reply(session, handoff.say, handoff.action, [{ type: 'safety' }])
-  }
 
   session.messages.push({ role: 'user', text: callerText })
   try {
@@ -112,21 +108,17 @@ export async function handleTurn(callId: string, callerText: string): Promise<Tu
       for (const call of answer.toolCalls) {
         const result = await runTool(session, call)
         results.push({ toolCallId: call.id, name: call.name, output: result.output })
-        events.push(
-          call.name === 'report_safety_issue'
-            ? { type: 'safety' }
-            : {
-                type: 'tool',
-                name: call.name,
-                ok: result.ok,
-                summary: result.summary,
-                job: result.job,
-              },
-        )
+        events.push({
+          type: 'tool',
+          name: call.name,
+          ok: result.ok,
+          summary: result.summary,
+          job: result.job,
+        })
         handoff ??= result.handoff
       }
       session.messages.push({ role: 'tool', results })
-      // A transfer or the safety script ends the conversation: the fixed line, no more model.
+      // A transfer ends the conversation: the fixed line, no more model.
       if (handoff) return reply(session, handoff.say, handoff.action, events)
     }
     const stuck = await giveUp(session, 'too many tool rounds')

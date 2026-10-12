@@ -164,7 +164,6 @@ describe('GET /api/analytics/recovery', () => {
     await createCall(shop, {
       answeredBy: 'ai',
       startedAt: phoenix('2026-10-06T10:00'),
-      safetyFlag: true,
     })
 
     // Out-of-range AI call

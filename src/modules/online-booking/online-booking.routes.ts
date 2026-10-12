@@ -102,16 +102,6 @@ onlineBookingRoutes.patch(
   },
 )
 
-onlineBookingRoutes.post(
-  '/online-booking/drafts/:token/safety-stop',
-  draftLimit,
-  tenantFromHost,
-  async (req, res) => {
-    await onlineBooking.stopDraftForSafety(req.tenant!.id, String(req.params.token))
-    res.json({ ok: true })
-  },
-)
-
 onlineBookingRoutes.get(
   '/online-booking/drafts/:token/photos',
   draftLimit,

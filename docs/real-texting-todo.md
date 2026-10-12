@@ -58,9 +58,6 @@ missing, and what a US launch would need on top.
 - [ ] The resume link (`bookingLink` in `online-booking.service.ts`) is always
       `https://<host>/`. A homeowner's phone can't open `localhost`, so a demo needs the web app
       on a public address (a tunnel or a deploy) and this link pointing at it.
-- [x] After the gas / carbon monoxide safety stop the draft is marked (`safety_stopped_at`, set
-      by `POST /online-booking/drafts/:token/safety-stop` from the safety screen) and never gets
-      the recovery text. Finishing step 4 after "I tapped Yes by mistake" clears it.
 - [ ] Now that texts really go out, tell the homeowner in the wizard's Exit dialog: "We'll text
       you a link to finish."
 - [ ] Make the 5-codes-per-hour cap atomic (delete, count and insert in one transaction that

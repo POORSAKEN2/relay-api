@@ -4,7 +4,6 @@ import { Phone, Zip } from '../../lib/fields.ts'
 import { HttpError } from '../../lib/http-error.ts'
 import { weekdayOf } from '../../lib/labels.ts'
 import { localTime, localToday } from '../../lib/local-day.ts'
-import { logger } from '../../lib/logger.ts'
 import { listWindowsOn } from '../dispatch/dispatch.queries.ts'
 import type { ToolCall, ToolSpec } from '../llm/llm.ts'
 import { insertCallback, listOpenWindows } from '../online-booking/online-booking.queries.ts'
@@ -13,7 +12,6 @@ import { bookHomeownerVisit } from '../online-booking/online-booking.service.ts'
 import { zipIsServed } from '../settings/settings.queries.ts'
 import { CALL_CONSENT_QUESTION, spokenWindow } from './prompt.ts'
 import * as queries from './receptionist.queries.ts'
-import { SAFETY_SCRIPT, SAFETY_SCRIPT_NO_TRANSFER } from './safety.ts'
 import type { Action, CallSession } from './session.ts'
 import { transferTarget } from './transfer.ts'
 
@@ -24,7 +22,7 @@ import { transferTarget } from './transfer.ts'
 const DAYS_AHEAD = 14 // the same two weeks the booking page offers
 const WINDOWS_OFFERED = 6
 
-// A tool that ends the conversation (transfer, safety) also gives the fixed line to say.
+// A tool that ends the conversation (a transfer) also gives the fixed line to say.
 export type Handoff = { say: string; action: Action }
 // `output` goes back to the model; `ok` and `summary` say what happened, for the test console.
 export type ToolResult = {
@@ -61,7 +59,6 @@ const TakeMessage = z.object({
   message: z.string().min(1).describe('What the caller needs, for the office'),
 })
 const TransferToHuman = z.object({ reason: z.string().min(1) })
-const ReportSafetyIssue = z.object({ what: z.string().min(1) })
 
 // The model reads these descriptions: they say when to use each tool.
 export const TOOL_SPECS: ToolSpec[] = [
@@ -91,11 +88,6 @@ export const TOOL_SPECS: ToolSpec[] = [
     'Hand the call to a person, when the caller asks for one.',
     TransferToHuman,
   ),
-  spec(
-    'report_safety_issue',
-    'Use at once for a gas, burning or rotten-egg smell, or a carbon monoxide alarm.',
-    ReportSafetyIssue,
-  ),
 ]
 
 // Runs one tool call the model asked for.
@@ -113,8 +105,6 @@ export async function runTool(session: CallSession, call: ToolCall): Promise<Too
       return takeMessage(session, call.input)
     case 'transfer_to_human':
       return transferToHuman(session, call.input)
-    case 'report_safety_issue':
-      return startSafety(session)
     default:
       return error(`There is no tool called ${call.name}.`)
   }
@@ -155,8 +145,6 @@ async function flagPriority(session: CallSession, input: unknown): Promise<ToolR
 }
 
 async function bookVisit(session: CallSession, input: unknown): Promise<ToolResult> {
-  // Whatever the model says, a gas or CO call is never booked.
-  if (session.safety) return error('This call is a safety issue. Do not book a visit.')
   if (session.bookedJobId) return error('Already booked this call. Don’t book it again.')
   const parsed = BookVisit.safeParse(input)
   if (!parsed.success) return error(`Some details are missing or wrong: ${issues(parsed.error)}`)
@@ -236,27 +224,6 @@ async function transferToHuman(session: CallSession, input: unknown): Promise<To
       action: { type: 'transfer', to },
     },
   }
-}
-
-// Gas or CO: the fixed safety script, then the on-call technician (or 911 when there is
-// nobody on call). Runs from the keyword check and from the model's report_safety_issue;
-// safe to run again on a later turn.
-export async function startSafety(
-  session: CallSession,
-): Promise<ToolResult & { handoff: Handoff }> {
-  const result = ok({ safety: true }, 'Safety script')
-  const to = session.tenant.onCallPhone
-  if (!session.safety) {
-    session.safety = true
-    logger.warn({ callId: session.callId }, 'Receptionist: gas or CO call')
-    await queries.updateCall(session.tenant.id, session.callId, {
-      safetyFlag: true,
-      ...(to ? { transferredAt: new Date() } : {}),
-    })
-  }
-  if (!to)
-    return { ...result, handoff: { say: SAFETY_SCRIPT_NO_TRANSFER, action: { type: 'hang_up' } } }
-  return { ...result, handoff: { say: SAFETY_SCRIPT, action: { type: 'transfer', to } } }
 }
 
 // The office during today's business hours, the on-call phone after (see transfer.ts).

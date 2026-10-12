@@ -134,6 +134,13 @@
       "when": 1791637095677,
       "tag": "0018_draft_safety_stop",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1791788606183,
+      "tag": "0019_drop_gas_safety",
+      "breakpoints": true
     }
   ]
 }

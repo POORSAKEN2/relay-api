@@ -15,7 +15,7 @@ import { endCall, handleTurn } from '../src/modules/receptionist/engine.ts'
 import { startTestCall } from '../src/modules/receptionist/test-console.service.ts'
 import { wrapUpCall } from '../src/modules/receptionist/wrap-up.ts'
 
-type Outcome = 'booked' | 'priority' | 'safety' | 'message' | 'transfer'
+type Outcome = 'booked' | 'priority' | 'message' | 'transfer'
 type Scenario = { name: string; fromPhone: string; callerLines: string[]; expect: Outcome }
 
 const scenarios: Scenario[] = JSON.parse(
@@ -44,11 +44,7 @@ for (const [index, scenario] of scenarios.entries()) {
     const reply = await handleTurn(callId, line)
     seconds.push((Date.now() - started) / 1000)
     for (const event of reply.events) {
-      console.log(
-        event.type === 'safety'
-          ? '  [safety script]'
-          : `  [${event.name}${event.ok ? '' : ' REFUSED'}] ${event.summary}`,
-      )
+      console.log(`  [${event.name}${event.ok ? '' : ' REFUSED'}] ${event.summary}`)
     }
     console.log(`AI: ${reply.say}`)
     if (reply.action) {
@@ -104,8 +100,7 @@ async function outcomesOf(tenantId: string, callId: string): Promise<Outcome[]> 
   const outcomes: Outcome[] = []
   if (booked.length > 0) outcomes.push('booked')
   if (booked.some((job) => job.priority)) outcomes.push('priority')
-  if (call.safetyFlag) outcomes.push('safety')
   if (messages.length > 0) outcomes.push('message')
-  if (call.transferredAt && !call.safetyFlag) outcomes.push('transfer')
+  if (call.transferredAt) outcomes.push('transfer')
   return outcomes
 }
