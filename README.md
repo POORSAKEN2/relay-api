@@ -98,7 +98,7 @@ The seed creates one contractor, **Desert Breeze Air** (slug `desert`), with 3 t
 |---|---|---|
 | `owner@desert.test` | Contractor owner | `/dashboard` (dispatch board), `/technicians`, `/services` |
 | `office@desert.test` | Office staff | `/dashboard`, `/technicians`, `/services` |
-| `admin@relay.test` | Relay superadmin | `/admin` (contractor branding) |
+| `admin@relay.test` | Relay superadmin | `/admin` on Relay's own host, **http://admin.localhost:5173** |
 | Sam Patel, Rita Gomez, Luis Moreno | Technicians | `/jobs` (placeholder until the jobs module) |
 
 Every email account uses the same development password: the `DEV_PASSWORD` value in [src/db/seed.ts](src/db/seed.ts).
