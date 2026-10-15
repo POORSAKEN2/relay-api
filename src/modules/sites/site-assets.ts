@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 // The site designs' stylesheets and script, read once at startup from ./designs/. Their URL
 // carries a hash of the content, so browsers can cache them for a year and still get a new
 // version right after a deploy.
-export const SITE_ASSET_FILES = ['breeze.css', 'site.js'] as const
+export const SITE_ASSET_FILES = ['breeze.css', 'clean.css', 'site.js'] as const
 export type SiteAssetFile = (typeof SITE_ASSET_FILES)[number]
 
 const CONTENT_TYPES: Record<string, string> = {
