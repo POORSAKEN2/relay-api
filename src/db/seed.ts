@@ -2,11 +2,19 @@ import { sql } from 'drizzle-orm'
 import { env } from '../config/env.ts'
 import { hashPassword } from '../modules/accounts/passwords.ts'
 import { db, pool } from './client.ts'
-import { phoneNumbers, subscriptionInvoices, tenants, users } from './schema.ts'
+import {
+  phoneNumbers,
+  siteFaqs,
+  siteReviews,
+  sites,
+  subscriptionInvoices,
+  tenants,
+  users,
+} from './schema.ts'
 import { seedDispatch } from './seed-dispatch.ts'
 
 // Resets the development database to demo data: one contractor, Desert Breeze Air, whose own
-// website is ../contractor-site. It keeps Relay's default brand colors.
+// website is http://desert.site.localhost:3000/. It keeps Relay's default brand colors.
 if (env.NODE_ENV === 'production') throw new Error('db:seed must not run in production')
 
 // Local development only: every seeded account signs in with this password.
@@ -24,7 +32,7 @@ const [desert] = await db
     // The demo runs in the Philippines: windows and quiet hours follow Manila time.
     timezone: 'Asia/Manila',
     contactEmail: 'office@desert.test',
-    contactPhone: '+16025550142', // the number on contractor-site
+    contactPhone: '+16025550142', // the number on the demo website
     perJobFeeCents: 1500, // $15 per recovered job
   })
   .returning()
@@ -221,6 +229,90 @@ await seedDispatch(desert.id, {
     },
   ],
 })
+
+// Desert's website, live at http://desert.site.localhost:3000/ and edited on the Website page.
+await db.insert(sites).values({
+  tenantId: desert.id,
+  design: 'breeze',
+  publishedAt: new Date(),
+  headline: 'Too hot inside? We’ll bring it back to 76°.',
+  intro:
+    'AC and heating repair, replacement and upkeep across the Phoenix metro. Book online in about two minutes, or call. We answer 24/7.',
+  about:
+    'A local crew that works in the Phoenix heat every day. We fix, install and look after central air, heat pumps, furnaces and ductless systems, all major brands.',
+  licenseNumber: null, // the demo has no real license
+  city: 'Phoenix',
+  region: 'AZ',
+  citiesServed: [
+    'Phoenix',
+    'Scottsdale',
+    'Tempe',
+    'Mesa',
+    'Chandler',
+    'Gilbert',
+    'Glendale',
+    'Peoria',
+  ],
+  emergencyService: true,
+})
+
+// Sample reviews, not real customers: the names say so on the page.
+await db.insert(siteReviews).values(
+  [
+    [
+      'Dana M. (sample)',
+      'Chandler',
+      'Our AC quit on a 114° Saturday. I booked online at noon, the tech was here by four, and it was blowing cold by dinner.',
+    ],
+    [
+      'Robert T. (sample)',
+      'Mesa',
+      'He priced the repair and a new unit side by side and let me choose. No pressure, and the repair has held all summer.',
+    ],
+    [
+      'Priya S. (sample)',
+      'Glendale',
+      'Got a text when he was on the way, he wore shoe covers, and he showed me the part that failed. Easy from start to finish.',
+    ],
+  ].map(([authorName, place, body], sortOrder) => ({
+    tenantId: desert.id,
+    authorName,
+    place,
+    rating: 5,
+    body,
+    sortOrder,
+  })),
+)
+
+await db.insert(siteFaqs).values(
+  [
+    [
+      'How soon can you come out?',
+      'The booking page shows every open time window, including same-day ones when we have them. In an emergency, call (602) 555-0142 any hour.',
+    ],
+    [
+      'What does a visit cost?',
+      'The booking page shows the diagnostic fee before you confirm. After the diagnosis, your technician gives you a flat-rate price for the repair, and nothing is done until you approve it.',
+    ],
+    [
+      'Should I repair or replace my AC?',
+      'Replacing usually makes sense when a system is 12 to 15 years old or more, still runs on R-22 refrigerant, or needs a repair that costs close to half the price of a new one. Your technician will price both so you can decide.',
+    ],
+    [
+      'How often should my system be serviced?',
+      'In Phoenix, twice a year: the AC in spring before the heat arrives and the heating in fall. Change standard filters every one to three months, and more often during dust-storm season.',
+    ],
+    [
+      'Which brands do you work on?',
+      'All major brands of central air conditioners, heat pumps, furnaces and ductless mini-splits.',
+    ],
+    ['How do I pay?', 'By card or cash, once the job is done.'],
+    [
+      'Can I change my appointment?',
+      'Yes. Your confirmation text and email both have a link to reschedule or cancel.',
+    ],
+  ].map(([question, answer], sortOrder) => ({ tenantId: desert.id, question, answer, sortOrder })),
+)
 
 // Last month's recovered-job invoice, still to be paid, so the owner's Booking settings and
 // the admin console have one to show. The daily billing job makes real ones.
