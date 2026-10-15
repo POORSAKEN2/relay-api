@@ -141,6 +141,13 @@
       "when": 1791788606183,
       "tag": "0019_drop_gas_safety",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1792065437745,
+      "tag": "0020_contractor_sites",
+      "breakpoints": true
     }
   ]
 }

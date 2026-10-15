@@ -35,7 +35,6 @@ git clone https://github.com/POORSAKEN2/relay-web.git
 relay/
   relay-api/          backend (this repository)
   relay-web/          frontend
-  contractor-site/    optional: the demo contractor's own website, shown on plain localhost:5173
 ```
 
 ### 3. Create the databases (once per computer)
@@ -108,7 +107,9 @@ Technicians have no password. They sign in at **http://desert.localhost:5173/sig
 
 Add a phone to a staff member on the Staff screen (`/staff`) to get booking alerts by text. Every new booking texts active owner and office users with a phone; priority bookings send right away, while routine bookings wait until quiet hours end.
 
-Plain http://localhost:5173 (no subdomain) shows the contractor's own website when `../contractor-site` exists; its **Book online** buttons lead to `desert.localhost:5173`.
+Desert's own website is served by the backend at **http://desert.site.localhost:3000/**. Owner and office users edit it on the **Website** page; every contractor gets one at `<slug>.site.<APP_DOMAIN>`.
+
+Plain http://localhost:5173 (no subdomain) belongs to no contractor: open `desert.localhost:5173`.
 
 ### 7. Check everything works (optional)
 
@@ -207,3 +208,5 @@ Web Service settings:
 - Start command: `npm start`
 - Health check path: `/health`
 - Environment: `NODE_ENV=production`, `DATABASE_URL` (a direct connection, not a pooled one, because pg-boss needs it), `APP_DOMAIN=garified.com`, `SIGN_IN_CODE_SECRET` (its own random value, made with the command in `.env.example`), `SENTRY_DSN`
+
+Contractor websites (`<slug>.site.garified.com`) are served by this same web service. Add the custom domain `*.site.garified.com` to it in Render, then add the DNS records Render shows: the wildcard CNAME and the `_acme-challenge` record for its certificate. This is a second wildcard because `*.garified.com` covers one subdomain level only. Nothing more is needed per contractor: a new contractor's site works as soon as they publish it.
