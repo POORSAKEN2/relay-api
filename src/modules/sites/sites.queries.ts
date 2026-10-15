@@ -18,6 +18,33 @@ export async function findSite(tenantId: string, tx: Db = db): Promise<Site | un
   return site
 }
 
+type SiteValues = Pick<
+  typeof sites.$inferInsert,
+  | 'design'
+  | 'headline'
+  | 'intro'
+  | 'about'
+  | 'licenseNumber'
+  | 'city'
+  | 'region'
+  | 'citiesServed'
+  | 'emergencyService'
+  | 'showPrices'
+>
+
+// The first save creates the row; later saves change it.
+export async function upsertSite(tenantId: string, values: SiteValues, tx: Db = db) {
+  await tx
+    .insert(sites)
+    .values({ ...values, tenantId })
+    .onConflictDoUpdate({ target: sites.tenantId, set: { ...values, updatedAt: new Date() } })
+}
+
+// null switches the site off.
+export async function setPublishedAt(tenantId: string, publishedAt: Date | null, tx: Db = db) {
+  await tx.update(sites).set({ publishedAt }).where(eq(sites.tenantId, tenantId))
+}
+
 // The contractor's Relay number, so calls from the site reach the AI when nobody answers.
 export async function findActiveNumber(tenantId: string, tx: Db = db): Promise<string | undefined> {
   const [row] = await tx

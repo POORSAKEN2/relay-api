@@ -3,10 +3,12 @@ import { Router } from 'express'
 import { env } from '../../config/env.ts'
 import { HttpError } from '../../lib/http-error.ts'
 import { logger } from '../../lib/logger.ts'
+import { requireRole } from '../../middleware/auth.ts'
+import { tenantOf } from '../booking/booking.service.ts'
 import { ERROR_PAGE, NOT_FOUND_PAGE } from './designs/system-pages.ts'
 import { findAsset } from './site-assets.ts'
 import { parseSiteHost } from './site-host.ts'
-import { PhotoParams } from './sites.schemas.ts'
+import { PhotoParams, SiteInput } from './sites.schemas.ts'
 import * as sites from './sites.service.ts'
 
 // The contractor's website, on its own host: desert.site.garified.com. Any other host, and
@@ -41,6 +43,35 @@ siteHostRoutes.use(async (req, res, next) => {
 })
 
 export const sitesRoutes = Router()
+
+// Editing the site: the Website page in the dashboard.
+
+const staff = requireRole('owner', 'office')
+
+sitesRoutes.get('/site', staff, async (req, res) => {
+  res.json(await sites.getSiteEditor(tenantOf(req.user!)))
+})
+
+sitesRoutes.put('/site', staff, async (req, res) => {
+  const input = SiteInput.parse(req.body)
+  res.json(await sites.saveSite(req.user!, input))
+})
+
+sitesRoutes.post('/site/publish', staff, async (req, res) => {
+  res.json(await sites.publishSite(req.user!))
+})
+
+sitesRoutes.post('/site/unpublish', staff, async (req, res) => {
+  res.json(await sites.unpublishSite(req.user!))
+})
+
+// Shown in an iframe next to the form; reloaded after each save, so never cached.
+sitesRoutes.get('/site/preview', staff, async (req, res) => {
+  const page = await sites.renderPreview(tenantOf(req.user!))
+  res.type('html').set('Cache-Control', 'no-store').send(page)
+})
+
+// Public: the site's files.
 
 const CACHE_FOR_A_YEAR = 'public, max-age=31536000, immutable'
 
