@@ -6,8 +6,10 @@ import {
   customers,
   jobs,
   properties,
+  type Site,
   services,
   signInCodes,
+  sites,
   tenants,
   type UserRole,
   users,
@@ -119,6 +121,26 @@ export async function createShop(slug: string) {
 }
 
 export type Shop = Awaited<ReturnType<typeof createShop>>
+
+// A published website for the contractor, with the least content the form allows.
+export async function createSite(
+  tenantId: string,
+  values: Partial<typeof sites.$inferInsert> = {},
+): Promise<Site> {
+  const [site] = await db
+    .insert(sites)
+    .values({
+      tenantId,
+      headline: 'Cool again today',
+      intro: 'AC repair across Phoenix.',
+      city: 'Phoenix',
+      region: 'AZ',
+      publishedAt: new Date(),
+      ...values,
+    })
+    .returning()
+  return site
+}
 
 export async function createTechnician(tenantId: string, name: string) {
   const [user] = await db
