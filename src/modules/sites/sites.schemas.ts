@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { SITE_DESIGNS } from '../../db/schema.ts'
+import { SITE_DESIGNS, SITE_PHOTO_KINDS } from '../../db/schema.ts'
 import { UsState } from '../../lib/fields.ts'
 
 // Limits match the database checks on `sites` (src/db/schema.ts).
@@ -56,6 +56,17 @@ export const SiteInput = z.object({
 export type SiteInput = z.infer<typeof SiteInput>
 
 export const PhotoParams = z.object({ photoId: z.uuid() })
+
+// The upload's query string: ?kind=hero|work&alt=… The photo itself is the request body.
+export const PhotoQuery = z.object({
+  kind: z.enum(SITE_PHOTO_KINDS),
+  alt: z
+    .string()
+    .trim()
+    .min(1, 'Describe the photo for people who can’t see it')
+    .max(200, 'Keep the description under 200 characters'),
+})
+export type PhotoQuery = z.infer<typeof PhotoQuery>
 
 export const ReviewInput = z.object({
   authorName: z

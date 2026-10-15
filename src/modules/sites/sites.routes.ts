@@ -1,5 +1,5 @@
 import * as Sentry from '@sentry/node'
-import { Router } from 'express'
+import express, { Router } from 'express'
 import { env } from '../../config/env.ts'
 import { HttpError } from '../../lib/http-error.ts'
 import { logger } from '../../lib/logger.ts'
@@ -9,11 +9,13 @@ import { ERROR_PAGE, NOT_FOUND_PAGE } from './designs/system-pages.ts'
 import { findAsset } from './site-assets.ts'
 import { parseSiteHost } from './site-host.ts'
 import * as lists from './site-lists.service.ts'
+import * as photos from './site-photos.service.ts'
 import {
   FaqInput,
   FaqParams,
   OrderInput,
   PhotoParams,
+  PhotoQuery,
   ReviewInput,
   ReviewParams,
   SiteInput,
@@ -119,6 +121,22 @@ sitesRoutes.put('/site/faqs/:faqId', staff, async (req, res) => {
 sitesRoutes.delete('/site/faqs/:faqId', staff, async (req, res) => {
   const { faqId } = FaqParams.parse(req.params)
   res.json(await lists.deleteFaq(req.user!, faqId))
+})
+
+// Photos. The image is the request body itself. The limit sits above the 1 MB the service
+// allows, so an oversized photo gets the service's clear message, not Express's 413.
+const photoBody = express.raw({ type: () => true, limit: '2mb' })
+
+sitesRoutes.post('/site/photos', staff, photoBody, async (req, res) => {
+  const query = PhotoQuery.parse(req.query)
+  // With no body, express.raw leaves req.body unset: treat it as an empty photo.
+  const bytes = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0)
+  res.json(await photos.addPhoto(req.user!, query, bytes))
+})
+
+sitesRoutes.delete('/site/photos/:photoId', staff, async (req, res) => {
+  const { photoId } = PhotoParams.parse(req.params)
+  res.json(await photos.deletePhoto(req.user!, photoId))
 })
 
 // Public: the site's files.

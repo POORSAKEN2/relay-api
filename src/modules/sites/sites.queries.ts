@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, sql } from 'drizzle-orm'
+import { and, asc, count, eq, isNull, sql } from 'drizzle-orm'
 import { type Db, db, type Tx } from '../../db/client.ts'
 import {
   businessHours,
@@ -217,4 +217,41 @@ export async function lockFaqIds(tenantId: string, tx: Tx): Promise<string[]> {
 
 export async function setFaqOrder(tenantId: string, faqId: string, sortOrder: number, tx: Tx) {
   await tx.update(siteFaqs).set({ sortOrder }).where(isFaqOf(tenantId, faqId))
+}
+
+// Photos
+
+export async function insertPhoto(
+  tenantId: string,
+  values: Omit<typeof sitePhotos.$inferInsert, 'tenantId' | 'id' | 'createdAt'>,
+  tx: Db = db,
+): Promise<string> {
+  const [row] = await tx
+    .insert(sitePhotos)
+    .values({ ...values, tenantId })
+    .returning({ id: sitePhotos.id })
+  return row.id
+}
+
+export async function deleteHeroPhoto(tenantId: string, tx: Db = db) {
+  await tx
+    .delete(sitePhotos)
+    .where(and(eq(sitePhotos.tenantId, tenantId), eq(sitePhotos.kind, 'hero')))
+}
+
+export async function countWorkPhotos(tenantId: string, tx: Db = db): Promise<number> {
+  const [row] = await tx
+    .select({ count: count() })
+    .from(sitePhotos)
+    .where(and(eq(sitePhotos.tenantId, tenantId), eq(sitePhotos.kind, 'work')))
+  return row.count
+}
+
+// True when the photo was found (and deleted).
+export async function deletePhoto(tenantId: string, photoId: string) {
+  const rows = await db
+    .delete(sitePhotos)
+    .where(and(eq(sitePhotos.tenantId, tenantId), eq(sitePhotos.id, photoId)))
+    .returning({ id: sitePhotos.id })
+  return rows.length > 0
 }
