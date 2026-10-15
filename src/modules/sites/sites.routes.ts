@@ -8,7 +8,16 @@ import { tenantOf } from '../booking/booking.service.ts'
 import { ERROR_PAGE, NOT_FOUND_PAGE } from './designs/system-pages.ts'
 import { findAsset } from './site-assets.ts'
 import { parseSiteHost } from './site-host.ts'
-import { PhotoParams, SiteInput } from './sites.schemas.ts'
+import * as lists from './site-lists.service.ts'
+import {
+  FaqInput,
+  FaqParams,
+  OrderInput,
+  PhotoParams,
+  ReviewInput,
+  ReviewParams,
+  SiteInput,
+} from './sites.schemas.ts'
 import * as sites from './sites.service.ts'
 
 // The contractor's website, on its own host: desert.site.garified.com. Any other host, and
@@ -69,6 +78,47 @@ sitesRoutes.post('/site/unpublish', staff, async (req, res) => {
 sitesRoutes.get('/site/preview', staff, async (req, res) => {
   const page = await sites.renderPreview(tenantOf(req.user!))
   res.type('html').set('Cache-Control', 'no-store').send(page)
+})
+
+// Reviews and questions. Each `/order` route comes before its `/:id` route, so "order" is
+// never read as an id.
+
+sitesRoutes.post('/site/reviews', staff, async (req, res) => {
+  res.json(await lists.addReview(req.user!, ReviewInput.parse(req.body)))
+})
+
+sitesRoutes.put('/site/reviews/order', staff, async (req, res) => {
+  const { ids } = OrderInput.parse(req.body)
+  res.json(await lists.reorderReviews(req.user!, ids))
+})
+
+sitesRoutes.put('/site/reviews/:reviewId', staff, async (req, res) => {
+  const { reviewId } = ReviewParams.parse(req.params)
+  res.json(await lists.updateReview(req.user!, reviewId, ReviewInput.parse(req.body)))
+})
+
+sitesRoutes.delete('/site/reviews/:reviewId', staff, async (req, res) => {
+  const { reviewId } = ReviewParams.parse(req.params)
+  res.json(await lists.deleteReview(req.user!, reviewId))
+})
+
+sitesRoutes.post('/site/faqs', staff, async (req, res) => {
+  res.json(await lists.addFaq(req.user!, FaqInput.parse(req.body)))
+})
+
+sitesRoutes.put('/site/faqs/order', staff, async (req, res) => {
+  const { ids } = OrderInput.parse(req.body)
+  res.json(await lists.reorderFaqs(req.user!, ids))
+})
+
+sitesRoutes.put('/site/faqs/:faqId', staff, async (req, res) => {
+  const { faqId } = FaqParams.parse(req.params)
+  res.json(await lists.updateFaq(req.user!, faqId, FaqInput.parse(req.body)))
+})
+
+sitesRoutes.delete('/site/faqs/:faqId', staff, async (req, res) => {
+  const { faqId } = FaqParams.parse(req.params)
+  res.json(await lists.deleteFaq(req.user!, faqId))
 })
 
 // Public: the site's files.

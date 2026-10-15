@@ -1,5 +1,5 @@
-import { and, asc, eq, isNull } from 'drizzle-orm'
-import { type Db, db } from '../../db/client.ts'
+import { and, asc, eq, isNull, sql } from 'drizzle-orm'
+import { type Db, db, type Tx } from '../../db/client.ts'
 import {
   businessHours,
   phoneNumbers,
@@ -114,4 +114,107 @@ export async function findPhotoData(id: string) {
     .where(eq(sitePhotos.id, id))
     .limit(1)
   return photo
+}
+
+// Reviews. A new one goes at the end of the list.
+
+type ReviewValues = Pick<
+  typeof siteReviews.$inferInsert,
+  'authorName' | 'place' | 'rating' | 'body'
+>
+
+const isReviewOf = (tenantId: string, reviewId: string) =>
+  and(eq(siteReviews.tenantId, tenantId), eq(siteReviews.id, reviewId))
+
+export async function insertReview(tenantId: string, values: ReviewValues): Promise<string> {
+  const endOfList = sql<number>`(select coalesce(max(r.sort_order), -1) + 1 from site_reviews r where r.tenant_id = ${tenantId})`
+  const [row] = await db
+    .insert(siteReviews)
+    .values({ ...values, tenantId, sortOrder: endOfList })
+    .returning({ id: siteReviews.id })
+  return row.id
+}
+
+// True when the review was found (and changed).
+export async function updateReview(tenantId: string, reviewId: string, values: ReviewValues) {
+  const rows = await db
+    .update(siteReviews)
+    .set(values)
+    .where(isReviewOf(tenantId, reviewId))
+    .returning({ id: siteReviews.id })
+  return rows.length > 0
+}
+
+// True when the review was found (and deleted).
+export async function deleteReview(tenantId: string, reviewId: string) {
+  const rows = await db
+    .delete(siteReviews)
+    .where(isReviewOf(tenantId, reviewId))
+    .returning({ id: siteReviews.id })
+  return rows.length > 0
+}
+
+// Locks the contractor's reviews until the transaction ends, so a reorder sees the whole list.
+export async function lockReviewIds(tenantId: string, tx: Tx): Promise<string[]> {
+  const rows = await tx
+    .select({ id: siteReviews.id })
+    .from(siteReviews)
+    .where(eq(siteReviews.tenantId, tenantId))
+    .for('update')
+  return rows.map((row) => row.id)
+}
+
+export async function setReviewOrder(
+  tenantId: string,
+  reviewId: string,
+  sortOrder: number,
+  tx: Tx,
+) {
+  await tx.update(siteReviews).set({ sortOrder }).where(isReviewOf(tenantId, reviewId))
+}
+
+// Questions. Same shape as reviews.
+
+type FaqValues = Pick<typeof siteFaqs.$inferInsert, 'question' | 'answer'>
+
+const isFaqOf = (tenantId: string, faqId: string) =>
+  and(eq(siteFaqs.tenantId, tenantId), eq(siteFaqs.id, faqId))
+
+export async function insertFaq(tenantId: string, values: FaqValues): Promise<string> {
+  const endOfList = sql<number>`(select coalesce(max(f.sort_order), -1) + 1 from site_faqs f where f.tenant_id = ${tenantId})`
+  const [row] = await db
+    .insert(siteFaqs)
+    .values({ ...values, tenantId, sortOrder: endOfList })
+    .returning({ id: siteFaqs.id })
+  return row.id
+}
+
+export async function updateFaq(tenantId: string, faqId: string, values: FaqValues) {
+  const rows = await db
+    .update(siteFaqs)
+    .set(values)
+    .where(isFaqOf(tenantId, faqId))
+    .returning({ id: siteFaqs.id })
+  return rows.length > 0
+}
+
+export async function deleteFaq(tenantId: string, faqId: string) {
+  const rows = await db
+    .delete(siteFaqs)
+    .where(isFaqOf(tenantId, faqId))
+    .returning({ id: siteFaqs.id })
+  return rows.length > 0
+}
+
+export async function lockFaqIds(tenantId: string, tx: Tx): Promise<string[]> {
+  const rows = await tx
+    .select({ id: siteFaqs.id })
+    .from(siteFaqs)
+    .where(eq(siteFaqs.tenantId, tenantId))
+    .for('update')
+  return rows.map((row) => row.id)
+}
+
+export async function setFaqOrder(tenantId: string, faqId: string, sortOrder: number, tx: Tx) {
+  await tx.update(siteFaqs).set({ sortOrder }).where(isFaqOf(tenantId, faqId))
 }

@@ -56,3 +56,35 @@ export const SiteInput = z.object({
 export type SiteInput = z.infer<typeof SiteInput>
 
 export const PhotoParams = z.object({ photoId: z.uuid() })
+
+export const ReviewInput = z.object({
+  authorName: z
+    .string()
+    .trim()
+    .min(1, 'Add the reviewer’s name')
+    .max(60, 'Keep the name under 60 characters'),
+  place: optionalText(60, 'Keep the place under 60 characters'),
+  rating: z.number().int().min(1, 'Pick 1 to 5 stars').max(5, 'Pick 1 to 5 stars'),
+  body: z.string().trim().min(1, 'Add the review').max(600, 'Keep the review under 600 characters'),
+})
+export type ReviewInput = z.infer<typeof ReviewInput>
+
+export const FaqInput = z.object({
+  question: z
+    .string()
+    .trim()
+    .min(1, 'Add the question')
+    .max(200, 'Keep the question under 200 characters'),
+  answer: z
+    .string()
+    .trim()
+    .min(1, 'Add the answer')
+    .max(1000, 'Keep the answer under 1,000 characters'),
+})
+export type FaqInput = z.infer<typeof FaqInput>
+
+// Every id of the list, in the new order.
+export const OrderInput = z.object({ ids: z.array(z.uuid()).max(200) })
+
+export const ReviewParams = z.object({ reviewId: z.uuid() })
+export const FaqParams = z.object({ faqId: z.uuid() })
