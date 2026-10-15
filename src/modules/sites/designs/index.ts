@@ -1,6 +1,7 @@
 import type { SiteDesign } from '../../../db/schema.ts'
 import type { Html } from '../html.ts'
 import type { SiteView } from '../site-view.ts'
+import { renderBold } from './bold.ts'
 import { renderBreeze } from './breeze.ts'
 import { renderClean } from './clean.ts'
 
@@ -8,7 +9,7 @@ import { renderClean } from './clean.ts'
 const RENDERERS: Record<SiteDesign, (view: SiteView) => Html> = {
   breeze: renderBreeze,
   clean: renderClean,
-  bold: renderBreeze, // until the bold design is built
+  bold: renderBold,
 }
 
 export function renderSite(view: SiteView): string {

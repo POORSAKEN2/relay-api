@@ -116,3 +116,7 @@ it('breeze links its own stylesheet and the shared script', () => {
 it('clean links its own stylesheet', () => {
   expect(page({}, 'clean')).toMatch(/href="\/api\/site\/assets\/clean\.css\?v=[0-9a-f]{10}"/)
 })
+
+it('bold links its own stylesheet', () => {
+  expect(page({}, 'bold')).toMatch(/href="\/api\/site\/assets\/bold\.css\?v=[0-9a-f]{10}"/)
+})
