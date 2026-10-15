@@ -1376,7 +1376,122 @@ export const webhookEvents = pgTable(
   ],
 )
 
+// =====================================================================
+// Contractor websites (docs/superpowers/specs/2026-10-12-contractor-sites-design.md)
+// =====================================================================
+
+export const SITE_DESIGNS = ['breeze', 'clean', 'bold'] as const
+export const SITE_PHOTO_KINDS = ['hero', 'work'] as const
+export const SITE_PHOTO_TYPES = ['image/jpeg', 'image/webp'] as const
+export const SITE_PHOTO_MAX_BYTES = 1_048_576
+export const SITE_WORK_PHOTOS_MAX = 12
+
+// One row per contractor. No row = the contractor has never saved the site form.
+export const sites = pgTable(
+  'sites',
+  {
+    tenantId: tenantId().primaryKey(),
+    design: text('design', { enum: SITE_DESIGNS }).notNull().default('breeze'),
+    publishedAt: timestamptz('published_at'), // null = site is off
+    headline: text('headline').notNull(),
+    intro: text('intro').notNull(), // the paragraph under the headline
+    about: text('about'), // 'About us' section; hidden when null
+    licenseNumber: text('license_number'), // 'AZ ROC #123456'; hidden when null
+    city: text('city').notNull(), // 'Phoenix'
+    region: text('region').notNull(), // 'AZ'
+    citiesServed: text('cities_served').array().notNull().default(sql`'{}'`), // town names (ZIPs stay booking-only)
+    emergencyService: boolean('emergency_service').notNull().default(false), // shows the 24/7 emergency band
+    showPrices: boolean('show_prices').notNull().default(true), // service prices on the site
+    updatedAt: timestamptz('updated_at').notNull().defaultNow(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    check('sites_design_valid', oneOf(t.design, SITE_DESIGNS)),
+    check('sites_headline_length', sql`char_length(${t.headline}) between 1 and 120`),
+    check('sites_intro_length', sql`char_length(${t.intro}) between 1 and 400`),
+    check('sites_about_length', sql`char_length(${t.about}) <= 2000`),
+    check('sites_license_number_length', sql`char_length(${t.licenseNumber}) <= 60`),
+    check('sites_city_length', sql`char_length(${t.city}) between 1 and 80`),
+    check('sites_region_format', sql`${t.region} ~ '^[A-Z]{2}$'`),
+    check('sites_cities_served_count', sql`cardinality(${t.citiesServed}) <= 30`),
+  ],
+)
+
+// Reviews the contractor typed in, copied from Google, Yelp and so on.
+export const siteReviews = pgTable(
+  'site_reviews',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: tenantId(),
+    authorName: text('author_name').notNull(), // 'Maria G.'
+    place: text('place'), // 'Mesa'
+    rating: smallint('rating').notNull(),
+    body: text('body').notNull(),
+    sortOrder: smallint('sort_order').notNull().default(0),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    check('site_reviews_author_name_length', sql`char_length(${t.authorName}) between 1 and 60`),
+    check('site_reviews_place_length', sql`char_length(${t.place}) <= 60`),
+    check('site_reviews_rating_range', sql`${t.rating} between 1 and 5`),
+    check('site_reviews_body_length', sql`char_length(${t.body}) between 1 and 600`),
+    index('site_reviews_tenant_idx').on(t.tenantId, t.sortOrder),
+  ],
+)
+
+// The site's questions and answers.
+export const siteFaqs = pgTable(
+  'site_faqs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: tenantId(),
+    question: text('question').notNull(),
+    answer: text('answer').notNull(),
+    sortOrder: smallint('sort_order').notNull().default(0),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    check('site_faqs_question_length', sql`char_length(${t.question}) between 1 and 200`),
+    check('site_faqs_answer_length', sql`char_length(${t.answer}) between 1 and 1000`),
+    index('site_faqs_tenant_idx').on(t.tenantId, t.sortOrder),
+  ],
+)
+
+// The site's hero photo and work photos. In Postgres like branding assets, until file storage
+// is chosen. Unlike branding assets they can be deleted: nothing else points at them.
+export const sitePhotos = pgTable(
+  'site_photos',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: tenantId(),
+    kind: text('kind', { enum: SITE_PHOTO_KINDS }).notNull(), // 'hero': one at a time; 'work': gallery
+    contentType: text('content_type', { enum: SITE_PHOTO_TYPES }).notNull(),
+    data: bytea('data').notNull(),
+    altText: text('alt_text').notNull(), // read aloud by screen readers
+    sortOrder: smallint('sort_order').notNull().default(0),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    check('site_photos_kind_valid', oneOf(t.kind, SITE_PHOTO_KINDS)),
+    check('site_photos_content_type_valid', oneOf(t.contentType, SITE_PHOTO_TYPES)),
+    check(
+      'site_photos_size',
+      sql`octet_length(${t.data}) between 1 and ${sql.raw(String(SITE_PHOTO_MAX_BYTES))}`,
+    ),
+    check('site_photos_alt_text_length', sql`char_length(${t.altText}) between 1 and 200`),
+    index('site_photos_tenant_idx').on(t.tenantId, t.kind, t.sortOrder),
+  ],
+)
+
 export type Tenant = typeof tenants.$inferSelect
 export type User = typeof users.$inferSelect
 export type UserRole = User['role']
 export type BrandingVersion = typeof brandingVersions.$inferSelect
+export type Site = typeof sites.$inferSelect
+export type SiteReview = typeof siteReviews.$inferSelect
+export type SiteFaq = typeof siteFaqs.$inferSelect
+export type SiteDesign = (typeof SITE_DESIGNS)[number]
+export type SitePhotoKind = (typeof SITE_PHOTO_KINDS)[number]
