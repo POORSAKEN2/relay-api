@@ -35,7 +35,6 @@ git clone https://github.com/POORSAKEN2/relay-web.git
 relay/
   relay-api/          backend (this repository)
   relay-web/          frontend
-  contractor-site/    optional: the demo contractor's own website, shown on plain localhost:5173
 ```
 
 ### 3. Create the databases (once per computer)
@@ -110,7 +109,7 @@ Add a phone to a staff member on the Staff screen (`/staff`) to get booking aler
 
 Desert's own website is served by the backend at **http://desert.site.localhost:3000/**. Owner and office users edit it on the **Website** page; every contractor gets one at `<slug>.site.<APP_DOMAIN>`.
 
-Plain http://localhost:5173 (no subdomain) shows the contractor's own website when `../contractor-site` exists; its **Book online** buttons lead to `desert.localhost:5173`.
+Plain http://localhost:5173 (no subdomain) belongs to no contractor: open `desert.localhost:5173`.
 
 ### 7. Check everything works (optional)
 
