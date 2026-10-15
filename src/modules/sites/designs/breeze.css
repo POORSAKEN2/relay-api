@@ -338,14 +338,12 @@ p {
 }
 .brand-name {
   padding-top: 0.2em; /* Josefin sits high on its line */
-  overflow: hidden;
   font-family: var(--font-display);
   font-size: 1.125rem;
   font-weight: 700;
   line-height: 1;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -445,8 +443,12 @@ p {
   .header-book {
     display: none;
   }
+  /* A long business name wraps to a second line next to the Menu button. */
   .brand-name {
     font-size: 1rem;
+    line-height: 1.15;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 }
 
