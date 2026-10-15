@@ -177,7 +177,7 @@ export async function renderPublicPage(slug: string): Promise<string | null> {
   const tenant = await findTenantByHost({ slug })
   if (!tenant || tenant.status === 'suspended') return null
   const data = await loadPublicSite(tenant)
-  if (!data || !data.site.publishedAt) return null
+  if (!data?.site.publishedAt) return null
   return renderSite(buildSiteView(data))
 }
 
