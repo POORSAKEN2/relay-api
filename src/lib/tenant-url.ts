@@ -13,3 +13,10 @@ export function tenantUrl(
       : `${tenant.slug}.${env.APP_DOMAIN}`
   return `https://${host}${path}`
 }
+
+// The address of a contractor's website. On a developer's machine relay-api serves it itself,
+// over http on its own port, so the dashboard's Open button has to say so.
+export function siteUrl(slug: string) {
+  const host = `${slug}.site.${env.APP_DOMAIN}`
+  return env.NODE_ENV === 'production' ? `https://${host}/` : `http://${host}:${env.PORT}/`
+}
