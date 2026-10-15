@@ -24,6 +24,7 @@ import { widgetRoutes } from './modules/online-booking/widget.routes.ts'
 import { receptionistRoutes } from './modules/receptionist/receptionist.routes.ts'
 import { scheduleRoutes } from './modules/schedule/schedule.routes.ts'
 import { settingsRoutes } from './modules/settings/settings.routes.ts'
+import { siteHostRoutes, sitesRoutes } from './modules/sites/sites.routes.ts'
 import { staffRoutes } from './modules/team/staff.routes.ts'
 import { teamRoutes } from './modules/team/team.routes.ts'
 import { technicianJobsRoutes } from './modules/technician-jobs/technician-jobs.routes.ts'
@@ -46,6 +47,9 @@ export function createApp() {
       },
     }),
   )
+  // A contractor's website host (desert.site.garified.com) gets its page here; every other
+  // host and path carries on as usual.
+  app.use(siteHostRoutes)
   // Before the cookie CORS below: any website may ask for the booking button's look.
   app.use(widgetRoutes)
   app.use(cors({ origin: checkOrigin, credentials: true, maxAge: 600 }))
@@ -77,6 +81,7 @@ export function createApp() {
     receptionistRoutes,
     scheduleRoutes,
     settingsRoutes,
+    sitesRoutes,
     teamRoutes,
     staffRoutes,
     technicianJobsRoutes,

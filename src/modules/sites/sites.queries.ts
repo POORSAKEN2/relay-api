@@ -78,3 +78,13 @@ export function listPhotoRefs(tenantId: string, tx: Db = db) {
     .where(eq(sitePhotos.tenantId, tenantId))
     .orderBy(asc(sitePhotos.kind), asc(sitePhotos.sortOrder), asc(sitePhotos.createdAt))
 }
+
+// Not tenant-scoped: site photos are public, found by their random id.
+export async function findPhotoData(id: string) {
+  const [photo] = await db
+    .select({ contentType: sitePhotos.contentType, data: sitePhotos.data })
+    .from(sitePhotos)
+    .where(eq(sitePhotos.id, id))
+    .limit(1)
+  return photo
+}
